@@ -183,7 +183,7 @@ impl TargetAdapterPort for RustSlintTargetAdapter {
             &mut files_generated,
         )?;
 
-        // 10. Ubuntu / Linux XDG desktop packaging & .deb builder when targeting UbuntuDesktop, LinuxDesktop, or CrossPlatformDesktop
+        // 10. Ubuntu / Linux XDG desktop packaging when targeting UbuntuDesktop, LinuxDesktop, or CrossPlatformDesktop
         if has_linux_desktop {
             let desktop_rel = format!("packaging/{crate_name}.desktop");
             let desktop_entry =
@@ -195,22 +195,6 @@ impl TargetAdapterPort for RustSlintTargetAdapter {
                 &root,
                 "packaging/ubuntu-deps.sh",
                 &ubuntu_deps,
-                &mut files_generated,
-            )?;
-
-            let gtk_runner = generate_ubuntu_gtk_runner(&self.config.window_title);
-            write_file(
-                &root,
-                "packaging/slint-gtk-runner.py",
-                &gtk_runner,
-                &mut files_generated,
-            )?;
-
-            let build_deb = generate_build_deb_script(&crate_name, &self.config.window_title);
-            write_file(
-                &root,
-                "packaging/build-deb.sh",
-                &build_deb,
                 &mut files_generated,
             )?;
         }
@@ -390,7 +374,6 @@ fn generate_main_rs(
     format!(
         r#"{win_attr}pub mod app;
 
-use app::effects::run_mock_fetch_effect;
 use app::events::AppEvent;
 use app::reducer::reduce;
 use app::state::AppState;
@@ -398,7 +381,6 @@ use app::state::AppState;
 {linux_attr}fn main() {{
     let mut state = AppState::default();
     reduce(&mut state, AppEvent::Initialize);
-    reduce(&mut state, run_mock_fetch_effect(false));
     println!(
         "Launched native Slint window '{{}}' ({{}}x{{}}) on route '{{}}'",
         "{title}",
@@ -406,26 +388,6 @@ use app::state::AppState;
         {height},
         state.current_route
     );
-
-    if std::env::args().any(|a| a == "--gui") {{
-        let exe_dir = std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|d| d.to_path_buf()))
-            .unwrap_or_else(|| std::path::PathBuf::from("."));
-        let candidates = [
-            std::path::PathBuf::from("packaging/slint-gtk-runner.py"),
-            exe_dir.join("../share/desktop-productivity-hub/slint-gtk-runner.py"),
-            std::path::PathBuf::from("/usr/share/desktop-productivity-hub/slint-gtk-runner.py"),
-        ];
-        for runner in &candidates {{
-            if runner.exists() {{
-                let _ = std::process::Command::new("python3")
-                    .arg(runner)
-                    .status();
-                break;
-            }}
-        }}
-    }}
 }}
 "#,
         win_attr = win_attr,
@@ -443,7 +405,7 @@ Type=Application
 Version=1.0
 Name={window_title}
 Comment=Native Rust + Slint Desktop Application migrated by MAE
-Exec={crate_name} --gui
+Exec={crate_name}
 Icon={crate_name}
 Terminal=false
 Categories=Utility;Development;
@@ -468,267 +430,6 @@ sudo apt-get install -y \
     libgl1-mesa-dev
 "#
     .to_string()
-}
-
-fn generate_ubuntu_gtk_runner(window_title: &str) -> String {
-    format!(
-        r##"#!/usr/bin/env python3
-"""Native Ubuntu Desktop Window Presenter for Migrated Rust + Slint Application."""
-import tkinter as tk
-from tkinter import messagebox
-
-class NativeSlintUbuntuWindow:
-    def __init__(self, root: tk.Tk) -> None:
-        self.root = root
-        self.root.title("{window_title} — Native Ubuntu Desktop (Rust + Slint)")
-        self.root.geometry("960x680")
-        self.root.configure(bg="#0f172a")
-
-        self.active_route = "/"
-        self.filter_query = tk.StringVar(value="")
-        self.draft_title = tk.StringVar(value="")
-        self.theme_mode = tk.StringVar(value="dark-slate (Native Desktop Config Store)")
-        self.tasks = [
-            "Verify native Slint UI compliance",
-            "Preserve behavioral migration contracts",
-            "Build & install Ubuntu .deb package",
-        ]
-
-        self._build_ui()
-        self._render_route()
-
-    def _build_ui(self) -> None:
-        # Header / NavBar
-        nav = tk.Frame(self.root, bg="#1e293b", padx=16, pady=12)
-        nav.pack(fill=tk.X)
-
-        title_lbl = tk.Label(
-            nav,
-            text="Desktop Productivity Hub (Native Ubuntu Rust + Slint)",
-            bg="#1e293b",
-            fg="#f8fafc",
-            font=("Sans", 14, "bold"),
-        )
-        title_lbl.pack(side=tk.LEFT)
-
-        btn_frame = tk.Frame(nav, bg="#1e293b")
-        btn_frame.pack(side=tk.RIGHT)
-
-        for label, route in [("Dashboard (/)", "/"), ("Tasks (/tasks)", "/tasks"), ("Settings (/settings)", "/settings")]:
-            b = tk.Button(
-                btn_frame,
-                text=label,
-                bg="#2563eb",
-                fg="#ffffff",
-                activebackground="#1d4ed8",
-                activeforeground="#ffffff",
-                relief=tk.FLAT,
-                padx=12,
-                pady=6,
-                command=lambda r=route: self.set_route(r),
-            )
-            b.pack(side=tk.LEFT, padx=4)
-
-        status_btn = tk.Button(
-            btn_frame,
-            text="Status Modal",
-            bg="#059669",
-            fg="#ffffff",
-            relief=tk.FLAT,
-            padx=12,
-            pady=6,
-            command=self.open_status_modal,
-        )
-        status_btn.pack(side=tk.LEFT, padx=4)
-
-        # Controls Bar (FilterBar + TaskForm)
-        ctrl = tk.Frame(self.root, bg="#0f172a", padx=16, pady=12)
-        ctrl.pack(fill=tk.X)
-
-        tk.Label(ctrl, text="Search / Filter:", bg="#0f172a", fg="#94a3b8", font=("Sans", 10)).pack(side=tk.LEFT)
-        filter_entry = tk.Entry(ctrl, textvariable=self.filter_query, bg="#1e293b", fg="#f8fafc", insertbackground="#f8fafc", width=22)
-        filter_entry.pack(side=tk.LEFT, padx=(6, 18))
-        self.filter_query.trace_add("write", lambda *_: self._render_route())
-
-        tk.Label(ctrl, text="New Task:", bg="#0f172a", fg="#94a3b8", font=("Sans", 10)).pack(side=tk.LEFT)
-        task_entry = tk.Entry(ctrl, textvariable=self.draft_title, bg="#1e293b", fg="#f8fafc", insertbackground="#f8fafc", width=28)
-        task_entry.pack(side=tk.LEFT, padx=6)
-        task_entry.bind("<Return>", lambda _: self.add_task())
-
-        add_btn = tk.Button(
-            ctrl,
-            text="Add Task",
-            bg="#2563eb",
-            fg="#ffffff",
-            relief=tk.FLAT,
-            padx=12,
-            pady=4,
-            command=self.add_task,
-        )
-        add_btn.pack(side=tk.LEFT, padx=4)
-
-        # Content View Area
-        self.content = tk.Frame(self.root, bg="#0f172a", padx=16, pady=12)
-        self.content.pack(fill=tk.BOTH, expand=True)
-
-        # Footer Provenance Banner
-        footer = tk.Frame(self.root, bg="#1e293b", padx=16, pady=8)
-        footer.pack(fill=tk.X, side=tk.BOTTOM)
-        self.footer_lbl = tk.Label(
-            footer,
-            text="",
-            bg="#1e293b",
-            fg="#38bdf8",
-            font=("Monospace", 9),
-        )
-        self.footer_lbl.pack(side=tk.LEFT)
-
-    def set_route(self, route: str) -> None:
-        self.active_route = route
-        self._render_route()
-
-    def add_task(self) -> None:
-        text = self.draft_title.get().strip()
-        if text:
-            self.tasks.append(text)
-            self.draft_title.set("")
-            self._render_route()
-
-    def open_status_modal(self) -> None:
-        messagebox.showinfo(
-            "Status Dialog (StatusModal)",
-            "All 4 Migration Contracts Verified (PASS)\n"
-            "- NativeCompliance: PASS (UBUNTU_DESKTOP)\n"
-            "- BuildGate: PASS\n"
-            "- BehavioralParity: PASS (3/3 scenarios)\n"
-            "- VisualParity: PASS (delta 0.008 <= 0.02)",
-        )
-
-    def _render_route(self) -> None:
-        for w in self.content.winfo_children():
-            w.destroy()
-
-        header = tk.Label(
-            self.content,
-            text=f"Active Route: {{self.active_route}}   |   Visible Tasks: {{len(self._visible_tasks())}}/{{len(self.tasks)}}",
-            bg="#0f172a",
-            fg="#60a5fa",
-            font=("Sans", 12, "bold"),
-            anchor="w",
-        )
-        header.pack(fill=tk.X, pady=(0, 10))
-
-        if self.active_route in ("/", "/tasks"):
-            for idx, item in enumerate(self._visible_tasks(), 1):
-                card = tk.Frame(self.content, bg="#1e293b", padx=14, pady=10)
-                card.pack(fill=tk.X, pady=4)
-                tk.Label(
-                    card,
-                    text=f"Item {{idx}}:  {{item}}",
-                    bg="#1e293b",
-                    fg="#f8fafc",
-                    font=("Sans", 11),
-                    anchor="w",
-                ).pack(side=tk.LEFT)
-                tk.Label(
-                    card,
-                    text="ACTIVE",
-                    bg="#1e293b",
-                    fg="#34d399",
-                    font=("Monospace", 9, "bold"),
-                ).pack(side=tk.RIGHT)
-        elif self.active_route == "/settings":
-            card = tk.Frame(self.content, bg="#1e293b", padx=16, pady=16)
-            card.pack(fill=tk.X, pady=6)
-            tk.Label(
-                card,
-                text="Capability Gap Resolution (UI_BROWSER_ONLY_API):",
-                bg="#1e293b",
-                fg="#fbbf24",
-                font=("Sans", 11, "bold"),
-                anchor="w",
-            ).pack(fill=tk.X)
-            tk.Label(
-                card,
-                text="React `window.localStorage.getItem('mae-desktop-theme')` -> Replaced with Native Rust Desktop Config Store",
-                bg="#1e293b",
-                fg="#f8fafc",
-                font=("Sans", 10),
-                anchor="w",
-            ).pack(fill=tk.X, pady=(4, 8))
-            tk.Label(
-                card,
-                text=f"Current Persisted Theme Token: {{self.theme_mode.get()}}",
-                bg="#1e293b",
-                fg="#38bdf8",
-                font=("Monospace", 10),
-                anchor="w",
-            ).pack(fill=tk.X)
-
-        self.footer_lbl.config(
-            text=f"Platform: UBUNTU_DESKTOP | Backend: wayland-x11-winit | Route: {{self.active_route}} | Filter: '{{self.filter_query.get()}}'"
-        )
-
-    def _visible_tasks(self):
-        q = self.filter_query.get().strip().lower()
-        return [t for t in self.tasks if not q or q in t.lower()]
-
-if __name__ == "__main__":
-    root = tk.Tk()
-    app = NativeSlintUbuntuWindow(root)
-    root.mainloop()
-"##
-    )
-}
-
-fn generate_build_deb_script(crate_name: &str, window_title: &str) -> String {
-    format!(
-        r#"#!/usr/bin/env bash
-set -euo pipefail
-
-SCRIPT_DIR="$(cd "$(dirname "${{BASH_SOURCE[0]}}")" && pwd)"
-PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-OUT_DEB="${{1:-$PROJECT_DIR/{crate_name}_0.1.0_amd64.deb}}"
-
-cargo build --offline --manifest-path "$PROJECT_DIR/Cargo.toml"
-
-STAGE_DIR="$PROJECT_DIR/target/deb-stage"
-rm -rf "$STAGE_DIR"
-mkdir -p "$STAGE_DIR/DEBIAN"
-mkdir -p "$STAGE_DIR/usr/bin"
-mkdir -p "$STAGE_DIR/usr/share/applications"
-mkdir -p "$STAGE_DIR/usr/share/{crate_name}/ui/theme"
-
-cat > "$STAGE_DIR/DEBIAN/control" <<EOF
-Package: {crate_name}
-Version: 0.1.0
-Section: utils
-Priority: optional
-Architecture: amd64
-Maintainer: MAE Migration Engine <mae@local>
-Description: {window_title} (Migrated from React to Native Ubuntu Rust + Slint)
-EOF
-
-cp "$PROJECT_DIR/target/debug/{crate_name}" "$STAGE_DIR/usr/bin/{crate_name}"
-chmod 0755 "$STAGE_DIR/usr/bin/{crate_name}"
-
-cp "$PROJECT_DIR/packaging/{crate_name}.desktop" "$STAGE_DIR/usr/share/applications/{crate_name}.desktop"
-cp "$PROJECT_DIR/packaging/slint-gtk-runner.py" "$STAGE_DIR/usr/share/{crate_name}/slint-gtk-runner.py"
-cp "$PROJECT_DIR/ui/app.slint" "$STAGE_DIR/usr/share/{crate_name}/ui/app.slint"
-cp "$PROJECT_DIR/ui/theme/tokens.slint" "$STAGE_DIR/usr/share/{crate_name}/ui/theme/tokens.slint"
-
-chmod -R 0755 "$STAGE_DIR"
-chmod 0644 "$STAGE_DIR/DEBIAN/control"
-chmod 0644 "$STAGE_DIR/usr/share/applications/{crate_name}.desktop"
-chmod 0644 "$STAGE_DIR/usr/share/{crate_name}/ui/app.slint"
-chmod 0644 "$STAGE_DIR/usr/share/{crate_name}/ui/theme/tokens.slint"
-chmod 0755 "$STAGE_DIR/usr/bin/{crate_name}"
-chmod 0755 "$STAGE_DIR/usr/share/{crate_name}/slint-gtk-runner.py"
-
-dpkg-deb --build "$STAGE_DIR" "$OUT_DEB"
-echo "Built Ubuntu Debian package: $OUT_DEB"
-"#
-    )
 }
 
 fn generate_lib_rs(has_windows_subsystem: bool) -> String {
