@@ -324,6 +324,8 @@ name = "{crate_name}"
 version = "0.1.0"
 edition = "2021"
 
+[workspace]
+
 [package.metadata.slint]
 ui_entry = "ui/app.slint"
 theme_tokens = "ui/theme/tokens.slint"
