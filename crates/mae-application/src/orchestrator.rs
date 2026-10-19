@@ -126,13 +126,18 @@ impl MigrationOrchestrator {
         self.artifact_repo.store(source_inventory_artifact)?;
 
         let semantic_model = self.source_adapter.extract_semantics(source_path)?;
-        let capability_report = self.source_adapter.assess_capabilities(&semantic_model)?;
-        aggregate.set_capability_report(capability_report.clone());
+        if aggregate.capability_report.assessments.is_empty()
+            && aggregate.capability_report.gaps.is_empty()
+        {
+            let capability_report = self.source_adapter.assess_capabilities(&semantic_model)?;
+            aggregate.set_capability_report(capability_report);
+        }
 
         // 3. Compute and lock canonical reviewed PlanHash
         if aggregate.plan_hash.is_none() {
             let contract_ids: Vec<ContractId> = aggregate.contracts.keys().cloned().collect();
-            let cap_digest = ContentHash::compute(format!("{:?}", capability_report).as_bytes()).0;
+            let cap_digest =
+                ContentHash::compute(format!("{:?}", aggregate.capability_report).as_bytes()).0;
             let plan_digest = ContentHash::compute(
                 format!("{:?}", aggregate.tasks.keys().collect::<Vec<_>>()).as_bytes(),
             )

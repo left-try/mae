@@ -10,6 +10,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "mae-adapter-rust-slint"
+version = "0.1.0"
+dependencies = [
+ "mae-domain",
+]
+
+[[package]]
 name = "mae-application"
 version = "0.1.0"
 dependencies = [
@@ -17,5 +24,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "mae-cli"
+version = "0.1.0"
+dependencies = [
+ "mae-adapter-react",
+ "mae-adapter-rust-slint",
+ "mae-application",
+ "mae-domain",
+ "mae-verification",
+]
+
+[[package]]
 name = "mae-domain"
 version = "0.1.0"
+
+[[package]]
+name = "mae-verification"
+version = "0.1.0"
+dependencies = [
+ "mae-adapter-rust-slint",
+ "mae-domain",
+]

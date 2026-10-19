@@ -5,6 +5,7 @@ members = [
     "crates/mae-adapter-react",
     "crates/mae-adapter-rust-slint",
     "crates/mae-verification",
+    "crates/mae-cli",
 ]
 resolver = "2"
 

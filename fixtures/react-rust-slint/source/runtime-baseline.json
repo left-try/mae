@@ -1,0 +1,20 @@
+{
+  "viewport_width": 1280,
+  "viewport_height": 800,
+  "observed_routes": ["/", "/tasks", "/settings"],
+  "screenshots": [
+    "baselines/dashboard-1280x800.png",
+    "baselines/tasks-1280x800.png",
+    "baselines/settings-1280x800.png"
+  ],
+  "accessibility_nodes": [
+    "nav:Primary Navigation",
+    "form:New Task Form",
+    "dialog:Status Dialog"
+  ],
+  "observed_events": [
+    "click:Navigate Tasks",
+    "submit:New Task Form",
+    "change:Search Tasks Input"
+  ]
+}

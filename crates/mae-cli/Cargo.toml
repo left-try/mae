@@ -1,0 +1,17 @@
+[package]
+name = "mae-cli"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "mae"
+path = "src/main.rs"
+
+[dependencies]
+mae-domain = { path = "../mae-domain" }
+mae-application = { path = "../mae-application" }
+mae-adapter-react = { path = "../mae-adapter-react" }
+mae-adapter-rust-slint = { path = "../mae-adapter-rust-slint" }
+mae-verification = { path = "../mae-verification" }
