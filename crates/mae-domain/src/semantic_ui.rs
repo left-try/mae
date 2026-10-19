@@ -373,10 +373,32 @@ impl AssetEntry {
     }
 }
 
+/// HTTP / Backend API endpoint binding extracted from source effects or event handlers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ApiEndpointBinding {
+    pub method: String,
+    pub url_or_path: String,
+    pub source_file: String,
+}
+
+impl ApiEndpointBinding {
+    pub fn new(
+        method: impl Into<String>,
+        url_or_path: impl Into<String>,
+        source_file: impl Into<String>,
+    ) -> Self {
+        Self {
+            method: method.into().to_ascii_uppercase(),
+            url_or_path: url_or_path.into(),
+            source_file: source_file.into(),
+        }
+    }
+}
+
 /// Composable Frontend Domain Intermediate Representation.
 ///
 /// Models component hierarchy, state, effects, interactions, routing,
-/// layout, tokens, and assets without inventing an unverified universal AST.
+/// layout, tokens, assets, and backend API bindings without inventing an unverified universal AST.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SemanticUiModel {
     pub platform: TargetPlatform,
@@ -388,6 +410,7 @@ pub struct SemanticUiModel {
     pub layout_constraints: Vec<LayoutConstraint>,
     pub style_tokens: Vec<StyleToken>,
     pub assets: Vec<AssetEntry>,
+    pub api_endpoints: Vec<ApiEndpointBinding>,
 }
 
 impl SemanticUiModel {
@@ -402,6 +425,7 @@ impl SemanticUiModel {
             layout_constraints: Vec::new(),
             style_tokens: Vec::new(),
             assets: Vec::new(),
+            api_endpoints: Vec::new(),
         }
     }
 
@@ -435,6 +459,10 @@ impl SemanticUiModel {
 
     pub fn add_asset(&mut self, asset: AssetEntry) {
         self.assets.push(asset);
+    }
+
+    pub fn add_api_endpoint(&mut self, endpoint: ApiEndpointBinding) {
+        self.api_endpoints.push(endpoint);
     }
 
     pub fn total_ui_elements(&self) -> usize {

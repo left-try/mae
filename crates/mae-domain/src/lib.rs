@@ -40,9 +40,9 @@ pub use ports::{
     VerifierPluginPort,
 };
 pub use semantic_ui::{
-    AssetEntry, ComponentNode, EffectBinding, InteractionBinding, LayoutConstraint, PropDefinition,
-    RouteDefinition, SemanticUiModel, StateField, StyleToken, TargetPlatform, UiElementKind,
-    UiElementNode,
+    ApiEndpointBinding, AssetEntry, ComponentNode, EffectBinding, InteractionBinding,
+    LayoutConstraint, PropDefinition, RouteDefinition, SemanticUiModel, StateField, StyleToken,
+    TargetPlatform, UiElementKind, UiElementNode,
 };
 pub use task::{MigrationTask, TaskState};
 pub use verification::{CoverageDisclosure, EvidenceRecord, VerificationStatus};

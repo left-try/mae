@@ -892,3 +892,36 @@ fn test_source_adapter_port_end_to_end() {
         .expect("Assess capabilities failed");
     assert!(!capability_report.assessments.is_empty());
 }
+
+#[test]
+fn test_extract_api_endpoint_bindings() {
+    let td = TestDir::new("api_endpoints");
+    td.write_file(
+        "src/App.tsx",
+        r#"import React, { useEffect } from 'react';
+           export function App() {
+               useEffect(() => {
+                   fetch('http://127.0.0.1:4010/api/state');
+                   fetch('http://127.0.0.1:4010/api/tasks', { method: 'POST' });
+               }, []);
+               return <div>App</div>;
+           }"#,
+    );
+
+    let adapter = ReactSourceAdapter::default_windows();
+    let model = adapter
+        .extract_semantics(td.as_str())
+        .expect("Extract semantics failed");
+
+    assert_eq!(model.api_endpoints.len(), 2);
+    assert_eq!(model.api_endpoints[0].method, "GET");
+    assert_eq!(
+        model.api_endpoints[0].url_or_path,
+        "http://127.0.0.1:4010/api/state"
+    );
+    assert_eq!(model.api_endpoints[1].method, "POST");
+    assert_eq!(
+        model.api_endpoints[1].url_or_path,
+        "http://127.0.0.1:4010/api/tasks"
+    );
+}
