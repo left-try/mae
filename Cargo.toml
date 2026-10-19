@@ -3,6 +3,8 @@ members = [
     "crates/mae-domain",
     "crates/mae-application",
     "crates/mae-adapter-react",
+    "crates/mae-adapter-rust-slint",
+    "crates/mae-verification",
 ]
 resolver = "2"
 
