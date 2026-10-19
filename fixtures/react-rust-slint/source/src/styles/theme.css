@@ -1,9 +1,13 @@
 :root {
   --color-primary: #2563eb;
   --color-surface: #0f172a;
+  --color-card: #1e293b;
   --color-text: #f8fafc;
   --spacing-md: 12px;
   --padding-lg: 16px;
+  --radius-md: 8px;
+  --font-size-base: 14px;
+  --scale-factor: 1.0;
 }
 
 .app-shell {
@@ -11,6 +15,9 @@
   flex-direction: column;
   gap: 12px;
   padding: 16px;
+  border-radius: 8px;
+  font-size: 14px;
+  zoom: 1.0;
 }
 
 @media (min-width: 1024px) {

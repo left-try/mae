@@ -224,12 +224,15 @@ impl RouteDefinition {
     }
 }
 
-/// Layout constraints and spacing rules.
+/// Layout constraints, spacing, roundness, and typography/scale rules.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LayoutConstraint {
     pub direction: String,
     pub spacing_px: f64,
     pub padding_px: f64,
+    pub border_radius_px: f64,
+    pub font_size_px: f64,
+    pub scale_factor: f64,
     pub responsive_rules: Vec<String>,
 }
 
@@ -239,8 +242,26 @@ impl LayoutConstraint {
             direction: direction.into(),
             spacing_px,
             padding_px,
+            border_radius_px: 0.0,
+            font_size_px: 14.0,
+            scale_factor: 1.0,
             responsive_rules: Vec::new(),
         }
+    }
+
+    pub fn with_border_radius(mut self, border_radius_px: f64) -> Self {
+        self.border_radius_px = border_radius_px;
+        self
+    }
+
+    pub fn with_font_size(mut self, font_size_px: f64) -> Self {
+        self.font_size_px = font_size_px;
+        self
+    }
+
+    pub fn with_scale_factor(mut self, scale_factor: f64) -> Self {
+        self.scale_factor = scale_factor;
+        self
     }
 
     pub fn with_responsive_rule(mut self, rule: impl Into<String>) -> Self {

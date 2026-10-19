@@ -361,6 +361,77 @@ fn visual_parity_verifier_enforces_geometry_and_pixel_delta_tolerances() {
 }
 
 #[test]
+fn visual_parity_verifier_rejects_roundness_and_scale_mismatch_and_inspects_slint_target_dir() {
+    let baseline = VisualSnapshot::new("route.home", 1280, 800, 12.0, 16.0, "#2563eb", 0.0)
+        .with_roundness_and_scale(8.0, 14.0, 1.0);
+
+    // 1. Missing roundness (border_radius_px = 0.0 vs 8.0) must FAIL
+    let unrounded_target =
+        VisualSnapshot::new("route.home", 1280, 800, 12.0, 16.0, "#2563eb", 0.005)
+            .with_roundness_and_scale(0.0, 14.0, 1.0);
+    // 2. Wrong default scale (scale_factor = 1.25 vs 1.0) must FAIL
+    let wrong_scale_target =
+        VisualSnapshot::new("route.home", 1280, 800, 12.0, 16.0, "#2563eb", 0.005)
+            .with_roundness_and_scale(8.0, 14.0, 1.25);
+
+    let contract = Contract::new(
+        ContractId::new("c.visual.roundness"),
+        "Visual Roundness & Scale Parity",
+        "Visual roundness (border-radius) and default scale must match source baseline",
+        VerificationCategory::Visual,
+        ContractSeverity::High,
+    )
+    .with_tolerance(TolerancePolicy::MaxPixelDeltaRatio(0.02));
+
+    let unrounded_ev = VisualParityVerifier::new(baseline.clone(), unrounded_target)
+        .verify(&contract, ArtifactRevision(1))
+        .unwrap();
+    assert_eq!(unrounded_ev.status, VerificationStatus::Fail);
+    assert!(unrounded_ev.summary.contains("roundness_matches=false"));
+
+    let wrong_scale_ev = VisualParityVerifier::new(baseline.clone(), wrong_scale_target)
+        .verify(&contract, ArtifactRevision(1))
+        .unwrap();
+    assert_eq!(wrong_scale_ev.status, VerificationStatus::Fail);
+    assert!(wrong_scale_ev.summary.contains("scale_matches=false"));
+
+    // 3. Inspect real generated Slint target directory
+    let target_dir = unique_temp_dir("visual_slint_inspect");
+    let mut model = sample_model();
+    model.layout_constraints = vec![mae_domain::LayoutConstraint::new("column", 12.0, 16.0)
+        .with_border_radius(8.0)
+        .with_font_size(14.0)
+        .with_scale_factor(1.0)];
+
+    let adapter = RustSlintTargetAdapter::default();
+    adapter
+        .scaffold_target(&model, target_dir.to_str().unwrap())
+        .expect("scaffold");
+
+    let dir_verifier = VisualParityVerifier::for_target_dir(baseline.clone(), &target_dir, 0.008);
+    let pass_ev = dir_verifier.verify(&contract, ArtifactRevision(1)).unwrap();
+    assert_eq!(
+        pass_ev.status,
+        VerificationStatus::Pass,
+        "Expected visual parity pass on scaffolded Slint files: {}",
+        pass_ev.summary
+    );
+
+    // Tamper with `ui/theme/tokens.slint` to break roundness (`border-radius: 0px;`)
+    let tokens_path = target_dir.join("ui/theme/tokens.slint");
+    let broken_tokens = fs::read_to_string(&tokens_path)
+        .unwrap()
+        .replace("border-radius: 8px;", "border-radius: 0px;");
+    fs::write(&tokens_path, broken_tokens).unwrap();
+
+    let fail_dir_ev = dir_verifier.verify(&contract, ArtifactRevision(2)).unwrap();
+    assert_eq!(fail_dir_ev.status, VerificationStatus::Fail);
+    assert!(fail_dir_ev.summary.contains("roundness_matches=false"));
+
+    let _ = fs::remove_dir_all(&target_dir);
+}
+
+#[test]
 fn native_compliance_verifier_validates_ubuntu_desktop_entry_and_rejects_when_missing() {
     let target_dir = unique_temp_dir("ubuntu_native");
     let mut model = sample_model();

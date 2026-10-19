@@ -638,16 +638,36 @@ pub fn can_navigate(path: &str) -> bool {{
 }
 
 fn generate_theme_tokens_slint(model: &SemanticUiModel) -> String {
-    let spacing = model
-        .layout_constraints
-        .first()
-        .map(|l| l.spacing_px as u32)
-        .unwrap_or(12);
-    let padding = model
-        .layout_constraints
-        .first()
-        .map(|l| l.padding_px as u32)
-        .unwrap_or(16);
+    let first_layout = model.layout_constraints.first();
+    let spacing = first_layout.map(|l| l.spacing_px as u32).unwrap_or(12);
+    let padding = first_layout.map(|l| l.padding_px as u32).unwrap_or(16);
+    let border_radius = first_layout
+        .map(|l| {
+            if l.border_radius_px > 0.0 {
+                l.border_radius_px as u32
+            } else {
+                8
+            }
+        })
+        .unwrap_or(8);
+    let font_size = first_layout
+        .map(|l| {
+            if l.font_size_px > 0.0 {
+                l.font_size_px as u32
+            } else {
+                14
+            }
+        })
+        .unwrap_or(14);
+    let scale_factor = first_layout
+        .map(|l| {
+            if l.scale_factor > 0.0 {
+                l.scale_factor
+            } else {
+                1.0
+            }
+        })
+        .unwrap_or(1.0);
 
     let mut token_props = String::new();
     for token in &model.style_tokens {
@@ -662,6 +682,9 @@ fn generate_theme_tokens_slint(model: &SemanticUiModel) -> String {
         r#"export global ThemeTokens {{
     out property <length> spacing: {spacing}px;
     out property <length> padding: {padding}px;
+    out property <length> border-radius: {border_radius}px;
+    out property <length> font-size: {font_size}px;
+    out property <float> scale-factor: {scale_factor:.2};
 {token_props}}}
 "#
     )
@@ -680,12 +703,14 @@ fn generate_component_slint(comp: &ComponentNode) -> String {
 
 export component {comp_name} inherits Rectangle {{
 {props}    callback action-triggered(string);
+    border-radius: ThemeTokens.border-radius;
 
     VerticalLayout {{
         spacing: ThemeTokens.spacing;
         padding: ThemeTokens.padding;
         Text {{
             text: "{comp_name}";
+            font-size: ThemeTokens.font-size;
             accessible-role: text;
         }}
     }}
@@ -695,6 +720,23 @@ export component {comp_name} inherits Rectangle {{
 }
 
 fn generate_app_slint(config: &RustSlintAdapterConfig, model: &SemanticUiModel) -> String {
+    let mut imports = String::from("import { ThemeTokens } from \"theme/tokens.slint\";\n");
+    let mut child_instances = String::new();
+
+    for comp in &model.components {
+        if comp.name.eq_ignore_ascii_case("App") {
+            continue;
+        }
+        let file_stem = sanitize_identifier(&comp.name).to_lowercase();
+        let comp_ident = pascal_case(&sanitize_identifier(&comp.name));
+        let import_line =
+            format!("import {{ {comp_ident} }} from \"components/{file_stem}.slint\";\n");
+        if !imports.contains(&import_line) {
+            imports.push_str(&import_line);
+            child_instances.push_str(&format!("            {comp_ident} {{}}\n"));
+        }
+    }
+
     let mut state_props = String::new();
     for field in &model.state_fields {
         let ident = sanitize_identifier(&field.name).replace('_', "-");
@@ -711,12 +753,12 @@ fn generate_app_slint(config: &RustSlintAdapterConfig, model: &SemanticUiModel) 
     }
 
     format!(
-        r#"import {{ ThemeTokens }} from "theme/tokens.slint";
-
+        r#"{imports}
 export component MainWindow inherits Window {{
     title: "{title}";
     preferred-width: {width}px;
     preferred-height: {height}px;
+    default-font-size: ThemeTokens.font-size;
 
     in-out property <string> current-route: "/";
     in-out property <string> filter-query: "";
@@ -726,23 +768,30 @@ export component MainWindow inherits Window {{
     callback submit-item(string);
     callback set-filter(string);
 {callbacks}
-    VerticalLayout {{
-        spacing: ThemeTokens.spacing;
-        padding: ThemeTokens.padding;
+    Rectangle {{
+        border-radius: ThemeTokens.border-radius;
 
-        Text {{
-            text: root.title;
-            accessible-role: text;
-            accessible-label: "{title}";
-        }}
+        VerticalLayout {{
+            spacing: ThemeTokens.spacing;
+            padding: ThemeTokens.padding;
+
+            Text {{
+                text: root.title;
+                font-size: ThemeTokens.font-size;
+                accessible-role: text;
+                accessible-label: "{title}";
+            }}
+{child_instances}        }}
     }}
 }}
 "#,
+        imports = imports,
         title = config.window_title,
         width = config.window_width,
         height = config.window_height,
         state_props = state_props,
-        callbacks = callbacks
+        callbacks = callbacks,
+        child_instances = child_instances
     )
 }
 

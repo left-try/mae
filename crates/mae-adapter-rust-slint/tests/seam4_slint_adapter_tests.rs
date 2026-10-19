@@ -216,3 +216,37 @@ fn scaffold_target_generates_ubuntu_desktop_entry_and_wayland_x11_backend() {
 
     let _ = fs::remove_dir_all(&target_dir);
 }
+
+#[test]
+fn scaffold_target_preserves_roundness_font_size_scale_and_child_component_composition() {
+    let target_dir = unique_temp_dir("roundness_scale");
+    let mut model = sample_windows_semantic_model();
+    model.layout_constraints[0] = LayoutConstraint::new("column", 12.0, 16.0)
+        .with_border_radius(8.0)
+        .with_font_size(14.0)
+        .with_scale_factor(1.0);
+
+    let adapter = RustSlintTargetAdapter::default();
+    adapter
+        .scaffold_target(&model, target_dir.to_str().unwrap())
+        .expect("scaffold target");
+
+    let tokens_slint =
+        fs::read_to_string(target_dir.join("ui/theme/tokens.slint")).expect("read tokens.slint");
+    assert!(tokens_slint.contains("out property <length> border-radius: 8px;"));
+    assert!(tokens_slint.contains("out property <length> font-size: 14px;"));
+    assert!(tokens_slint.contains("out property <float> scale-factor: 1.00;"));
+
+    let header_slint = fs::read_to_string(target_dir.join("ui/components/header.slint"))
+        .expect("read header.slint");
+    assert!(header_slint.contains("border-radius: ThemeTokens.border-radius;"));
+    assert!(header_slint.contains("font-size: ThemeTokens.font-size;"));
+
+    let app_slint = fs::read_to_string(target_dir.join("ui/app.slint")).expect("read app.slint");
+    assert!(app_slint.contains("default-font-size: ThemeTokens.font-size;"));
+    assert!(app_slint.contains("border-radius: ThemeTokens.border-radius;"));
+    assert!(app_slint.contains("import { Header } from \"components/header.slint\";"));
+    assert!(app_slint.contains("import { TaskCard } from \"components/taskcard.slint\";"));
+
+    let _ = fs::remove_dir_all(&target_dir);
+}

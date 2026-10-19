@@ -750,6 +750,9 @@ fn extract_jsx_element_or_component(line: &str) -> Option<String> {
 pub fn analyze_css_content(content: &str, model: &mut SemanticUiModel) {
     let mut spacing_px = 0.0f64;
     let mut padding_px = 0.0f64;
+    let mut border_radius_px = 0.0f64;
+    let mut font_size_px = 14.0f64;
+    let mut scale_factor = 1.0f64;
     let mut direction = "column".to_string();
     let mut responsive_rules = Vec::new();
 
@@ -763,6 +766,19 @@ pub fn analyze_css_content(content: &str, model: &mut SemanticUiModel) {
                 let decl = &part[dash_idx..];
                 if decl.contains(':') {
                     if let Some(token) = parse_css_variable(decl) {
+                        if token.name.contains("radius") && border_radius_px == 0.0 {
+                            border_radius_px = parse_px_value(decl);
+                        } else if token.name.contains("font-size") {
+                            let parsed = parse_px_value(decl);
+                            if parsed > 0.0 {
+                                font_size_px = parsed;
+                            }
+                        } else if token.name.contains("scale") {
+                            let parsed = parse_px_value(decl);
+                            if parsed > 0.0 {
+                                scale_factor = parsed;
+                            }
+                        }
                         if !model.style_tokens.iter().any(|t| t.name == token.name) {
                             model.add_style_token(token);
                         }
@@ -784,11 +800,23 @@ pub fn analyze_css_content(content: &str, model: &mut SemanticUiModel) {
             direction = "row".to_string();
         }
 
-        // 3. Spacing / Padding
+        // 3. Spacing / Padding / Roundness / Font Size / Scale
         if trimmed.starts_with("gap:") {
             spacing_px = parse_px_value(trimmed);
         } else if trimmed.starts_with("padding:") {
             padding_px = parse_px_value(trimmed);
+        } else if trimmed.starts_with("border-radius:") {
+            border_radius_px = parse_px_value(trimmed);
+        } else if trimmed.starts_with("font-size:") {
+            let parsed = parse_px_value(trimmed);
+            if parsed > 0.0 {
+                font_size_px = parsed;
+            }
+        } else if trimmed.starts_with("zoom:") || trimmed.starts_with("scale:") {
+            let parsed = parse_px_value(trimmed);
+            if parsed > 0.0 {
+                scale_factor = parsed;
+            }
         }
 
         // 4. Responsive @media rules
@@ -798,7 +826,10 @@ pub fn analyze_css_content(content: &str, model: &mut SemanticUiModel) {
         }
     }
 
-    let mut constraint = LayoutConstraint::new(direction, spacing_px, padding_px);
+    let mut constraint = LayoutConstraint::new(direction, spacing_px, padding_px)
+        .with_border_radius(border_radius_px)
+        .with_font_size(font_size_px)
+        .with_scale_factor(scale_factor);
     for r in responsive_rules {
         constraint = constraint.with_responsive_rule(r);
     }
