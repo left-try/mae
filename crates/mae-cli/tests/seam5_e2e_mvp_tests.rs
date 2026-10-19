@@ -51,11 +51,12 @@ fn mvp_criterion_1_and_2_fixture_analysis_and_browser_only_gap_classification() 
     let (model, capability_report, runtime_baseline) =
         analyze_react_fixture(&source_dir).expect("analyze fixture");
 
-    // Criterion 1: Source analysis extracts all 5 components, 3 routes, state hooks, effects, CSS tokens, and assets
+    // Criterion 1: Source analysis extracts all 11 components/views, 6 routes, 35+ UI elements, state hooks, effects, CSS tokens, and assets
     assert_eq!(model.platform, TargetPlatform::WindowsDesktop);
-    assert!(model.components.len() >= 5);
-    assert_eq!(model.routes.len(), 3);
-    assert!(model.state_fields.len() >= 4);
+    assert!(model.components.len() >= 11);
+    assert_eq!(model.routes.len(), 6);
+    assert!(model.total_ui_elements() >= 35);
+    assert!(model.state_fields.len() >= 9);
     assert!(!model.effects.is_empty());
     assert!(!model.style_tokens.is_empty());
     assert!(!model.layout_constraints.is_empty());
@@ -118,6 +119,20 @@ fn mvp_criterion_3_4_5_6_full_pipeline_generates_compilable_windows_rust_slint_t
     assert!(target_dir.join("src/app/reducer.rs").exists());
     assert!(target_dir.join("ui/app.slint").exists());
     assert!(target_dir.join("ui/theme/tokens.slint").exists());
+    assert!(target_dir
+        .join("ui/components/dashboardview.slint")
+        .exists());
+    assert!(target_dir.join("ui/components/tasksview.slint").exists());
+    assert!(target_dir
+        .join("ui/components/kanbanboardview.slint")
+        .exists());
+    assert!(target_dir
+        .join("ui/components/analyticsview.slint")
+        .exists());
+    assert!(target_dir
+        .join("ui/components/notificationsdrawer.slint")
+        .exists());
+    assert!(target_dir.join("ui/components/settingsview.slint").exists());
 
     let main_rs = fs::read_to_string(target_dir.join("src/main.rs")).unwrap();
     assert!(
@@ -132,6 +147,23 @@ fn mvp_criterion_3_4_5_6_full_pipeline_generates_compilable_windows_rust_slint_t
     let app_slint = fs::read_to_string(target_dir.join("ui/app.slint")).unwrap();
     assert!(app_slint.contains("default-font-size: ThemeTokens.font-size;"));
     assert!(app_slint.contains("border-radius: ThemeTokens.border-radius;"));
+    assert!(
+        app_slint.contains("import { KanbanBoardView } from \"components/kanbanboardview.slint\";")
+    );
+    assert!(app_slint.contains("import { AnalyticsView } from \"components/analyticsview.slint\";"));
+    assert!(app_slint
+        .contains("import { NotificationsDrawer } from \"components/notificationsdrawer.slint\";"));
+
+    let kanban_slint =
+        fs::read_to_string(target_dir.join("ui/components/kanbanboardview.slint")).unwrap();
+    assert!(kanban_slint.contains("accessible-role: slider;"));
+    assert!(kanban_slint.contains("Move to In Progress Button"));
+
+    let analytics_slint =
+        fs::read_to_string(target_dir.join("ui/components/analyticsview.slint")).unwrap();
+    assert!(analytics_slint.contains("accessible-role: tab;"));
+    assert!(analytics_slint.contains("accessible-role: checkbox;"));
+    assert!(analytics_slint.contains("accessible-role: progress-indicator;"));
 
     // Criterion 5: All recorded evidence records have complete scenario coverage disclosure
     assert!(!outcome.aggregate.evidence_ledger.is_empty());
@@ -261,7 +293,7 @@ fn mvp_criterion_8_and_9_cli_subcommands_and_checkpoint_resume_work_end_to_end()
         execute_cli_args(&["mae".to_string(), "analyze".to_string(), src_str.clone()])
             .expect("cli analyze");
     assert!(analyze_out.contains("MAE Analyze Complete:"));
-    assert!(analyze_out.contains("routes=3"));
+    assert!(analyze_out.contains("routes=6"));
 
     let plan_out = execute_cli_args(&["mae".to_string(), "plan".to_string(), src_str.clone()])
         .expect("cli plan");

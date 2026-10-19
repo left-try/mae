@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use mae_domain::{
     ArtifactRevision, ComponentNode, DomainError, MigrationTask, SemanticUiModel,
-    TargetAdapterPort, TargetPlatform, TargetScaffoldSummary,
+    TargetAdapterPort, TargetPlatform, TargetScaffoldSummary, UiElementKind,
 };
 
 /// Configuration for the Rust + Slint native desktop target adapter.
@@ -477,7 +477,13 @@ pub struct AppState {{
     pub loading: bool,
     pub error_message: Option<String>,
     pub items: Vec<String>,
+    pub completed_items: Vec<String>,
     pub filter_query: String,
+    pub wip_limit: u32,
+    pub notifications_muted: bool,
+    pub compact_mode: bool,
+    pub time_range: String,
+    pub card_columns: BTreeMap<String, String>,
     pub custom_fields: BTreeMap<String, String>,
 {struct_fields}}}
 
@@ -489,7 +495,13 @@ impl Default for AppState {{
             loading: false,
             error_message: None,
             items: Vec::new(),
+            completed_items: Vec::new(),
             filter_query: String::new(),
+            wip_limit: 5,
+            notifications_muted: false,
+            compact_mode: false,
+            time_range: "30d".to_string(),
+            card_columns: BTreeMap::new(),
             custom_fields: BTreeMap::new(),
 {default_inits}        }}
     }}
@@ -526,6 +538,12 @@ pub enum AppEvent {{
     Navigate(String),
     SubmitItem(String),
     SetFilter(String),
+    CompleteAllItems,
+    MoveCard {{ card_id: String, column: String }},
+    SetWipLimit(u32),
+    SetNotificationsMuted(bool),
+    SetCompactMode(bool),
+    SetTimeRange(String),
     SetField {{ key: String, value: String }},
     AsyncLoadStarted,
     AsyncLoadSucceeded(Vec<String>),
@@ -560,6 +578,24 @@ pub fn reduce(state: &mut AppState, event: AppEvent) {
         }
         AppEvent::SetFilter(query) => {
             state.filter_query = query;
+        }
+        AppEvent::CompleteAllItems => {
+            state.completed_items.extend(state.items.drain(..));
+        }
+        AppEvent::MoveCard { card_id, column } => {
+            state.card_columns.insert(card_id, column);
+        }
+        AppEvent::SetWipLimit(limit) => {
+            state.wip_limit = limit.clamp(1, 50);
+        }
+        AppEvent::SetNotificationsMuted(muted) => {
+            state.notifications_muted = muted;
+        }
+        AppEvent::SetCompactMode(compact) => {
+            state.compact_mode = compact;
+        }
+        AppEvent::SetTimeRange(range) => {
+            state.time_range = range;
         }
         AppEvent::SetField { key, value } => {
             state.custom_fields.insert(key, value);
@@ -698,6 +734,116 @@ fn generate_component_slint(comp: &ComponentNode) -> String {
         props.push_str(&format!("    in-out property <string> {prop_ident};\n"));
     }
 
+    let mut element_nodes = String::new();
+    for elem in &comp.elements {
+        let safe_label = elem.label.replace('"', "\\\"");
+        let aria = elem
+            .aria_label
+            .as_deref()
+            .unwrap_or(&elem.label)
+            .replace('"', "\\\"");
+        let snippet = match elem.kind {
+            UiElementKind::Button | UiElementKind::TabButton => {
+                let role = if elem.kind == UiElementKind::TabButton {
+                    "tab"
+                } else {
+                    "button"
+                };
+                format!(
+                    r#"        Rectangle {{
+            border-radius: ThemeTokens.border-radius;
+            Text {{
+                text: "{safe_label}";
+                font-size: ThemeTokens.font-size;
+                accessible-role: {role};
+                accessible-label: "{aria}";
+            }}
+            TouchArea {{
+                clicked => {{ root.action-triggered("{safe_label}"); }}
+            }}
+        }}
+"#
+                )
+            }
+            UiElementKind::TextInput => format!(
+                r#"        Rectangle {{
+            border-radius: ThemeTokens.border-radius;
+            TextInput {{
+                font-size: ThemeTokens.font-size;
+                accessible-role: text-input;
+                accessible-label: "{aria}";
+            }}
+        }}
+"#
+            ),
+            UiElementKind::Checkbox => format!(
+                r#"        HorizontalLayout {{
+            spacing: ThemeTokens.spacing;
+            Rectangle {{
+                width: 16px;
+                height: 16px;
+                border-radius: 4px;
+            }}
+            Text {{
+                text: "{safe_label}";
+                font-size: ThemeTokens.font-size;
+                accessible-role: checkbox;
+                accessible-label: "{aria}";
+            }}
+        }}
+"#
+            ),
+            UiElementKind::SelectDropdown => format!(
+                r#"        Rectangle {{
+            border-radius: ThemeTokens.border-radius;
+            Text {{
+                text: "{safe_label}";
+                font-size: ThemeTokens.font-size;
+                accessible-role: combobox;
+                accessible-label: "{aria}";
+            }}
+        }}
+"#
+            ),
+            UiElementKind::Slider => format!(
+                r#"        Rectangle {{
+            height: 8px;
+            border-radius: 4px;
+            Text {{
+                text: "{safe_label}";
+                font-size: ThemeTokens.font-size;
+                accessible-role: slider;
+                accessible-label: "{aria}";
+            }}
+        }}
+"#
+            ),
+            UiElementKind::ProgressBar => format!(
+                r#"        Rectangle {{
+            height: 10px;
+            border-radius: ThemeTokens.border-radius;
+            Text {{
+                text: "{safe_label}";
+                font-size: ThemeTokens.font-size;
+                accessible-role: progress-indicator;
+                accessible-label: "{aria}";
+            }}
+        }}
+"#
+            ),
+            UiElementKind::Badge | UiElementKind::Dialog | UiElementKind::Heading => format!(
+                r#"        Text {{
+            text: "{safe_label}";
+            font-size: ThemeTokens.font-size;
+            accessible-role: text;
+            accessible-label: "{aria}";
+        }}
+"#
+            ),
+        };
+        element_nodes.push_str(&snippet);
+    }
+
     format!(
         r#"import {{ ThemeTokens }} from "../theme/tokens.slint";
 
@@ -713,7 +859,7 @@ export component {comp_name} inherits Rectangle {{
             font-size: ThemeTokens.font-size;
             accessible-role: text;
         }}
-    }}
+{element_nodes}    }}
 }}
 "#
     )
@@ -821,6 +967,34 @@ fn test_generated_slint_app_state_and_reducer_parity() {{
 
     reduce(&mut state, AppEvent::Navigate("{second_route}".to_string()));
     assert_eq!(state.current_route, "{second_route}");
+
+    reduce(
+        &mut state,
+        AppEvent::MoveCard {{
+            card_id: "card-1".to_string(),
+            column: "in_progress".to_string(),
+        }},
+    );
+    assert_eq!(
+        state.card_columns.get("card-1").map(String::as_str),
+        Some("in_progress")
+    );
+
+    reduce(&mut state, AppEvent::SetWipLimit(8));
+    assert_eq!(state.wip_limit, 8);
+
+    reduce(&mut state, AppEvent::SetNotificationsMuted(true));
+    assert!(state.notifications_muted);
+
+    reduce(&mut state, AppEvent::SetCompactMode(true));
+    assert!(state.compact_mode);
+
+    reduce(&mut state, AppEvent::SetTimeRange("90d".to_string()));
+    assert_eq!(state.time_range, "90d");
+
+    reduce(&mut state, AppEvent::CompleteAllItems);
+    assert!(state.items.is_empty());
+    assert_eq!(state.completed_items.len(), 1);
 
     let effect_event = run_mock_fetch_effect(false);
     reduce(&mut state, effect_event);

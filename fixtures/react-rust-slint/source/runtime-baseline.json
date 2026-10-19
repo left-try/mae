@@ -1,20 +1,39 @@
 {
   "viewport_width": 1280,
   "viewport_height": 800,
-  "observed_routes": ["/", "/tasks", "/settings"],
+  "observed_routes": [
+    "/",
+    "/tasks",
+    "/kanban",
+    "/analytics",
+    "/notifications",
+    "/settings"
+  ],
   "screenshots": [
     "baselines/dashboard-1280x800.png",
     "baselines/tasks-1280x800.png",
+    "baselines/kanban-1280x800.png",
+    "baselines/analytics-1280x800.png",
+    "baselines/notifications-1280x800.png",
     "baselines/settings-1280x800.png"
   ],
   "accessibility_nodes": [
     "nav:Primary Navigation",
     "form:New Task Form",
-    "dialog:Status Dialog"
+    "dialog:Status Dialog",
+    "aside:Notifications Drawer",
+    "section:Kanban Board Screen",
+    "section:Analytics & Velocity Screen"
   ],
   "observed_events": [
     "click:Navigate Tasks",
+    "click:Navigate Kanban",
+    "click:Navigate Analytics",
+    "click:Navigate Notifications",
+    "click:Navigate Settings",
     "submit:New Task Form",
-    "change:Search Tasks Input"
+    "change:Search Tasks Input",
+    "change:WIP Limit Slider",
+    "click:Move to In Progress Button"
   ]
 }

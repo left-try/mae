@@ -86,6 +86,68 @@ impl PropDefinition {
     }
 }
 
+/// Semantic kind of interactive or display UI element inside a component.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum UiElementKind {
+    Button,
+    TextInput,
+    Checkbox,
+    SelectDropdown,
+    Slider,
+    ProgressBar,
+    TabButton,
+    Badge,
+    Dialog,
+    Heading,
+}
+
+impl UiElementKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Button => "button",
+            Self::TextInput => "text-input",
+            Self::Checkbox => "checkbox",
+            Self::SelectDropdown => "select",
+            Self::Slider => "slider",
+            Self::ProgressBar => "progress",
+            Self::TabButton => "tab",
+            Self::Badge => "badge",
+            Self::Dialog => "dialog",
+            Self::Heading => "heading",
+        }
+    }
+}
+
+/// Interactive or structural UI element extracted from a component's template/JSX.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UiElementNode {
+    pub kind: UiElementKind,
+    pub label: String,
+    pub aria_label: Option<String>,
+    pub variant: Option<String>,
+}
+
+impl UiElementNode {
+    pub fn new(kind: UiElementKind, label: impl Into<String>) -> Self {
+        Self {
+            kind,
+            label: label.into(),
+            aria_label: None,
+            variant: None,
+        }
+    }
+
+    pub fn with_aria_label(mut self, aria_label: impl Into<String>) -> Self {
+        self.aria_label = Some(aria_label.into());
+        self
+    }
+
+    pub fn with_variant(mut self, variant: impl Into<String>) -> Self {
+        self.variant = Some(variant.into());
+        self
+    }
+}
+
 /// Component tree node extracted from source UI.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ComponentNode {
@@ -93,6 +155,7 @@ pub struct ComponentNode {
     pub name: String,
     pub props: Vec<PropDefinition>,
     pub children: Vec<String>,
+    pub elements: Vec<UiElementNode>,
     pub source_path: String,
 }
 
@@ -107,6 +170,7 @@ impl ComponentNode {
             name: name.into(),
             props: Vec::new(),
             children: Vec::new(),
+            elements: Vec::new(),
             source_path: source_path.into(),
         }
     }
@@ -118,6 +182,11 @@ impl ComponentNode {
 
     pub fn with_child(mut self, child_id: impl Into<String>) -> Self {
         self.children.push(child_id.into());
+        self
+    }
+
+    pub fn with_element(mut self, element: UiElementNode) -> Self {
+        self.elements.push(element);
         self
     }
 }
@@ -366,5 +435,9 @@ impl SemanticUiModel {
 
     pub fn add_asset(&mut self, asset: AssetEntry) {
         self.assets.push(asset);
+    }
+
+    pub fn total_ui_elements(&self) -> usize {
+        self.components.iter().map(|c| c.elements.len()).sum()
     }
 }

@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use mae_domain::{
     AssetEntry, ComponentNode, DomainError, EffectBinding, InteractionBinding, LayoutConstraint,
     PropDefinition, RouteDefinition, SemanticUiModel, StateField, StyleToken, TargetPlatform,
+    UiElementKind, UiElementNode,
 };
 
 /// Deterministic static semantic analyzer for React/TypeScript and CSS source code.
@@ -328,11 +329,120 @@ fn extract_components(
                 node.children.push(child);
             }
 
+            // Extract interactive and structural UI elements from JSX in this file
+            for elem in extract_jsx_ui_elements(content) {
+                node.elements.push(elem);
+            }
+
             components.push(node);
         }
     }
 
     components
+}
+
+fn extract_jsx_ui_elements(content: &str) -> Vec<UiElementNode> {
+    let mut elements = Vec::new();
+    let lines: Vec<&str> = content.lines().collect();
+    let mut i = 0;
+
+    while i < lines.len() {
+        let trimmed = lines[i].trim();
+
+        // Collect a multi-line opening tag block if line starts with `<` and doesn't close on same line
+        let mut block = trimmed.to_string();
+        if (trimmed.starts_with("<button")
+            || trimmed.starts_with("<input")
+            || trimmed.starts_with("<select")
+            || trimmed.starts_with("<progress")
+            || trimmed.starts_with("<dialog")
+            || trimmed.starts_with("<span")
+            || trimmed.starts_with("<h1")
+            || trimmed.starts_with("<h2"))
+            && !trimmed.contains('>')
+        {
+            let mut j = i + 1;
+            while j < lines.len() && j <= i + 8 {
+                block.push(' ');
+                block.push_str(lines[j].trim());
+                if lines[j].contains('>') {
+                    break;
+                }
+                j += 1;
+            }
+        }
+
+        let aria = extract_attribute_value(&block, "aria-label");
+
+        if block.starts_with("<button") {
+            let role = extract_attribute_value(&block, "role");
+            let kind = if role.as_deref() == Some("tab") {
+                UiElementKind::TabButton
+            } else {
+                UiElementKind::Button
+            };
+            let label = aria.clone().unwrap_or_else(|| "Button".to_string());
+            let mut node = UiElementNode::new(kind, label);
+            if let Some(a) = aria {
+                node = node.with_aria_label(a);
+            }
+            elements.push(node);
+        } else if block.starts_with("<input") {
+            let input_type =
+                extract_attribute_value(&block, "type").unwrap_or_else(|| "text".into());
+            let kind = match input_type.as_str() {
+                "checkbox" => UiElementKind::Checkbox,
+                "range" => UiElementKind::Slider,
+                _ => UiElementKind::TextInput,
+            };
+            let label = aria
+                .clone()
+                .or_else(|| extract_attribute_value(&block, "placeholder"))
+                .unwrap_or_else(|| format!("{input_type} input"));
+            let mut node = UiElementNode::new(kind, label);
+            if let Some(a) = aria {
+                node = node.with_aria_label(a);
+            }
+            elements.push(node);
+        } else if block.starts_with("<select") {
+            let label = aria.clone().unwrap_or_else(|| "Select".to_string());
+            let mut node = UiElementNode::new(UiElementKind::SelectDropdown, label);
+            if let Some(a) = aria {
+                node = node.with_aria_label(a);
+            }
+            elements.push(node);
+        } else if block.starts_with("<progress") {
+            let label = aria.clone().unwrap_or_else(|| "Progress".to_string());
+            let mut node = UiElementNode::new(UiElementKind::ProgressBar, label);
+            if let Some(a) = aria {
+                node = node.with_aria_label(a);
+            }
+            elements.push(node);
+        } else if block.starts_with("<dialog") {
+            let label = aria.clone().unwrap_or_else(|| "Dialog".to_string());
+            let mut node = UiElementNode::new(UiElementKind::Dialog, label);
+            if let Some(a) = aria {
+                node = node.with_aria_label(a);
+            }
+            elements.push(node);
+        } else if block.starts_with("<span")
+            && extract_attribute_value(&block, "role").as_deref() == Some("status")
+        {
+            let label = aria.clone().unwrap_or_else(|| "Status Badge".to_string());
+            let mut node = UiElementNode::new(UiElementKind::Badge, label);
+            if let Some(a) = aria {
+                node = node.with_aria_label(a);
+            }
+            elements.push(node);
+        } else if block.starts_with("<h1") || block.starts_with("<h2") {
+            let label = aria.clone().unwrap_or_else(|| "Heading".to_string());
+            elements.push(UiElementNode::new(UiElementKind::Heading, label));
+        }
+
+        i += 1;
+    }
+
+    elements
 }
 
 fn extract_component_name(line: &str) -> Option<String> {
