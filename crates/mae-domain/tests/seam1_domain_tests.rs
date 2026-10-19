@@ -1112,3 +1112,30 @@ fn test_ports_clean_architecture_mock_implementations() {
     let artifact = adapter.discover("dummy/path").unwrap();
     assert_eq!(artifact.kind, ArtifactKind::SourceInventory);
 }
+
+#[test]
+fn test_migration_eval_metrics_and_token_estimation() {
+    assert_eq!(estimate_token_count(""), 0);
+    assert!(estimate_token_count("Migrate React component to Slint UI") >= 6);
+
+    let mut metrics = MigrationEvalMetrics::new();
+    metrics.record_agent_invocation("Prompt text here with words", "Completion output summary");
+    assert_eq!(metrics.agent_invocations_count, 1);
+    assert!(metrics.prompt_tokens_estimated > 0);
+    assert!(metrics.completion_tokens_estimated > 0);
+    assert_eq!(
+        metrics.total_tokens_estimated,
+        metrics.prompt_tokens_estimated + metrics.completion_tokens_estimated
+    );
+
+    metrics.component_name_consistency_ratio = 1.0;
+    metrics.route_consistency_ratio = 1.0;
+    metrics.state_field_consistency_ratio = 1.0;
+    metrics.ui_element_parity_ratio = 1.0;
+    metrics.architecture_consistency_score = 1.0;
+    assert_eq!(metrics.overall_consistency_score(), 1.0);
+
+    let json = metrics.to_json_report();
+    assert!(json.contains("\"total_tokens_estimated\":"));
+    assert!(json.contains("\"overall_consistency_score\": 1.0000"));
+}

@@ -7,6 +7,7 @@ pub mod aggregate;
 pub mod artifact;
 pub mod capability;
 pub mod contract;
+pub mod eval;
 pub mod ids;
 pub mod policies;
 pub mod ports;
@@ -24,6 +25,7 @@ pub use contract::{
     Contract, ContractSeverity, ContractStimulus, ObservableExpectation, TolerancePolicy,
     VerificationCategory,
 };
+pub use eval::{estimate_token_count, MigrationEvalMetrics};
 pub use ids::{
     ArtifactId, ArtifactRevision, ContentHash, ContractId, MigrationId, PlanHash, TaskId,
 };
