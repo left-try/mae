@@ -277,8 +277,16 @@ fn scaffold_target_generates_pure_rust_api_client_for_shared_mock_backend() {
     assert!(api_client_rs.contains("(\"GET\", \"http://127.0.0.1:4010/api/state\")"));
     assert!(api_client_rs.contains("(\"POST\", \"http://127.0.0.1:4010/api/tasks\")"));
     assert!(api_client_rs.contains("pub fn fetch_backend_state()"));
-    assert!(api_client_rs.contains("pub fn post_create_task("));
+    assert!(api_client_rs.contains("pub fn post_create_task_with_priority("));
+    assert!(api_client_rs.contains("pub fn post_complete_all_tasks()"));
     assert!(api_client_rs.contains("pub fn post_move_kanban_card("));
+    assert!(api_client_rs.contains("pub fn post_update_time_range("));
+    assert!(api_client_rs.contains("pub fn post_update_theme_mode("));
+
+    let tokens_slint =
+        fs::read_to_string(target_dir.join("ui/theme/tokens.slint")).expect("read tokens.slint");
+    assert!(tokens_slint.contains("out property <bool> responsive-wrap: true;"));
+    assert!(tokens_slint.contains("out property <length> max-content-width: 1240px;"));
 
     let effects_rs =
         fs::read_to_string(target_dir.join("src/app/effects.rs")).expect("read src/app/effects.rs");
