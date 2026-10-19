@@ -274,3 +274,45 @@ fn mvp_criterion_8_and_9_cli_subcommands_and_checkpoint_resume_work_end_to_end()
 
     let _ = fs::remove_dir_all(&temp);
 }
+
+#[test]
+fn mvp_ubuntu_desktop_full_e2e_pipeline_and_cli_flag() {
+    let temp = unique_temp_dir("ubuntu_e2e");
+    let target_dir = temp.join("ubuntu_slint_target");
+    let root_str = workspace_root().to_string_lossy().to_string();
+    let src_str = fixture_source_dir().to_string_lossy().to_string();
+    let tgt_str = target_dir.to_string_lossy().to_string();
+
+    // Run E2E via CLI with `--platform ubuntu`
+    let e2e_out = execute_cli_args(&[
+        "mae".to_string(),
+        "run-e2e".to_string(),
+        "--platform".to_string(),
+        "ubuntu".to_string(),
+        root_str,
+        src_str,
+        tgt_str.clone(),
+    ])
+    .expect("cli run-e2e --platform ubuntu");
+
+    assert!(e2e_out.contains("platform=UBUNTU_DESKTOP"));
+    assert!(e2e_out.contains("success=true, health_score=1.00"));
+
+    // Verify generated Ubuntu XDG .desktop entry and Ubuntu dependency script exist
+    assert!(target_dir
+        .join("packaging/desktop-productivity-hub.desktop")
+        .exists());
+    assert!(target_dir.join("packaging/ubuntu-deps.sh").exists());
+
+    // Run `mae verify --platform ubuntu`
+    let verify_out = execute_cli_args(&[
+        "mae".to_string(),
+        "verify".to_string(),
+        "--platform=ubuntu".to_string(),
+        tgt_str,
+    ])
+    .expect("cli verify --platform=ubuntu");
+    assert!(verify_out.contains("platform=UBUNTU_DESKTOP, native_status=PASS, violations=0"));
+
+    let _ = fs::remove_dir_all(&temp);
+}

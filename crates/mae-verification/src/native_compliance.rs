@@ -2,7 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use mae_domain::{
-    ArtifactRevision, Contract, CoverageDisclosure, DomainError, EvidenceRecord,
+    ArtifactRevision, Contract, CoverageDisclosure, DomainError, EvidenceRecord, TargetPlatform,
     VerificationCategory, VerificationStatus, VerifierPluginPort,
 };
 
@@ -22,6 +22,7 @@ const FORBIDDEN_WRAPPER_TOKENS: &[&str] = &[
 pub struct NativeComplianceVerifier {
     pub target_dir: PathBuf,
     pub require_windows_subsystem: bool,
+    pub require_linux_desktop_entry: bool,
     pub source_revision: ArtifactRevision,
 }
 
@@ -30,6 +31,16 @@ impl NativeComplianceVerifier {
         Self {
             target_dir: target_dir.into(),
             require_windows_subsystem,
+            require_linux_desktop_entry: false,
+            source_revision: ArtifactRevision::initial(),
+        }
+    }
+
+    pub fn for_platform(target_dir: impl Into<PathBuf>, platform: TargetPlatform) -> Self {
+        Self {
+            target_dir: target_dir.into(),
+            require_windows_subsystem: platform.requires_windows_subsystem(),
+            require_linux_desktop_entry: platform.requires_linux_desktop_entry(),
             source_revision: ArtifactRevision::initial(),
         }
     }
@@ -92,6 +103,31 @@ impl NativeComplianceVerifier {
             {
                 violations.push(
                     "Missing Windows GUI subsystem attribute `#![cfg_attr(target_os = \"windows\", windows_subsystem = \"windows\")]` in src/main.rs".to_string(),
+                );
+            }
+        }
+
+        if self.require_linux_desktop_entry {
+            let packaging_dir = self.target_dir.join("packaging");
+            let mut found_valid_desktop = false;
+            if let Ok(entries) = fs::read_dir(&packaging_dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.extension().and_then(|e| e.to_str()) == Some("desktop") {
+                        if let Ok(desktop_content) = fs::read_to_string(&path) {
+                            if desktop_content.contains("[Desktop Entry]")
+                                && desktop_content.contains("Type=Application")
+                            {
+                                found_valid_desktop = true;
+                            }
+                        }
+                    }
+                }
+            }
+            if !found_valid_desktop {
+                violations.push(
+                    "Missing Ubuntu/Linux XDG `[Desktop Entry]` file under packaging/*.desktop"
+                        .to_string(),
                 );
             }
         }

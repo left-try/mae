@@ -359,3 +359,40 @@ fn visual_parity_verifier_enforces_geometry_and_pixel_delta_tolerances() {
         .unwrap();
     assert_eq!(fail_ev.status, VerificationStatus::Fail);
 }
+
+#[test]
+fn native_compliance_verifier_validates_ubuntu_desktop_entry_and_rejects_when_missing() {
+    let target_dir = unique_temp_dir("ubuntu_native");
+    let mut model = sample_model();
+    model.platform = TargetPlatform::UbuntuDesktop;
+
+    let adapter = RustSlintTargetAdapter::with_crate_name("ubuntu-slint-app");
+    adapter
+        .scaffold_target(&model, target_dir.to_str().unwrap())
+        .expect("scaffold ubuntu");
+
+    let verifier =
+        NativeComplianceVerifier::for_platform(&target_dir, TargetPlatform::UbuntuDesktop);
+    let contract = Contract::new(
+        ContractId::new("c.native.ubuntu"),
+        "Ubuntu Native Compliance",
+        "Target must include Ubuntu XDG .desktop entry and native Slint UI",
+        VerificationCategory::NativeCompliance,
+        ContractSeverity::Critical,
+    );
+
+    let pass_ev = verifier
+        .verify(&contract, ArtifactRevision(1))
+        .expect("verify ubuntu pass");
+    assert_eq!(pass_ev.status, VerificationStatus::Pass);
+
+    // Delete packaging/ubuntu-slint-app.desktop and verify it fails
+    fs::remove_file(target_dir.join("packaging/ubuntu-slint-app.desktop")).unwrap();
+    let fail_ev = verifier
+        .verify(&contract, ArtifactRevision(2))
+        .expect("verify ubuntu fail");
+    assert_eq!(fail_ev.status, VerificationStatus::Fail);
+    assert!(fail_ev.summary.contains("Missing Ubuntu/Linux XDG"));
+
+    let _ = fs::remove_dir_all(&target_dir);
+}
