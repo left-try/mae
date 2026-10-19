@@ -3,9 +3,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use mae_domain::{
-    AssetEntry, ComponentNode, DomainError, EffectBinding, InteractionBinding, LayoutConstraint,
-    PropDefinition, RouteDefinition, SemanticUiModel, StateField, StyleToken, TargetPlatform,
-    UiElementKind, UiElementNode,
+    ApiEndpointBinding, AssetEntry, ComponentNode, DomainError, EffectBinding, InteractionBinding,
+    LayoutConstraint, PropDefinition, RouteDefinition, SemanticUiModel, StateField, StyleToken,
+    TargetPlatform, UiElementKind, UiElementNode,
 };
 
 /// Deterministic static semantic analyzer for React/TypeScript and CSS source code.
@@ -195,6 +195,18 @@ pub fn analyze_tsx_content(file_path: &str, content: &str, model: &mut SemanticU
     let interactions = extract_interaction_bindings(content);
     for inter in interactions {
         model.add_interaction(inter);
+    }
+
+    // 7. Extract HTTP / Backend API endpoint bindings (fetch(...))
+    let endpoints = extract_api_endpoints(file_path, content);
+    for ep in endpoints {
+        if !model
+            .api_endpoints
+            .iter()
+            .any(|e| e.method == ep.method && e.url_or_path == ep.url_or_path)
+        {
+            model.add_api_endpoint(ep);
+        }
     }
 }
 
@@ -975,4 +987,35 @@ fn parse_px_value(line: &str) -> f64 {
     } else {
         val_str.parse::<f64>().unwrap_or(0.0)
     }
+}
+
+fn extract_api_endpoints(file_path: &str, content: &str) -> Vec<ApiEndpointBinding> {
+    let mut endpoints = Vec::new();
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if let Some(fetch_idx) = trimmed.find("fetch(") {
+            let after_fetch = trimmed[fetch_idx + 6..].trim();
+            let quote = after_fetch.chars().next().unwrap_or(' ');
+            if quote == '\'' || quote == '"' || quote == '`' {
+                let rest = &after_fetch[1..];
+                if let Some(end_quote) = rest.find(quote) {
+                    let url_or_path = rest[..end_quote].trim().to_string();
+                    let remainder = &rest[end_quote + 1..];
+                    let method = if remainder.contains("POST") || remainder.contains("'post'") {
+                        "POST"
+                    } else if remainder.contains("PUT") || remainder.contains("'put'") {
+                        "PUT"
+                    } else if remainder.contains("DELETE") || remainder.contains("'delete'") {
+                        "DELETE"
+                    } else {
+                        "GET"
+                    };
+                    if !url_or_path.is_empty() {
+                        endpoints.push(ApiEndpointBinding::new(method, url_or_path, file_path));
+                    }
+                }
+            }
+        }
+    }
+    endpoints
 }

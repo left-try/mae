@@ -250,3 +250,39 @@ fn scaffold_target_preserves_roundness_font_size_scale_and_child_component_compo
 
     let _ = fs::remove_dir_all(&target_dir);
 }
+
+#[test]
+fn scaffold_target_generates_pure_rust_api_client_for_shared_mock_backend() {
+    let target_dir = unique_temp_dir("api_client_gen");
+    let mut model = sample_windows_semantic_model();
+    model.add_api_endpoint(mae_domain::ApiEndpointBinding::new(
+        "GET",
+        "http://127.0.0.1:4010/api/state",
+        "src/App.tsx",
+    ));
+    model.add_api_endpoint(mae_domain::ApiEndpointBinding::new(
+        "POST",
+        "http://127.0.0.1:4010/api/tasks",
+        "src/App.tsx",
+    ));
+
+    let adapter = RustSlintTargetAdapter::default();
+    adapter
+        .scaffold_target(&model, target_dir.to_str().unwrap())
+        .expect("scaffold target with api_client");
+
+    let api_client_rs = fs::read_to_string(target_dir.join("src/app/api_client.rs"))
+        .expect("read src/app/api_client.rs");
+    assert!(api_client_rs.contains("pub const BACKEND_ADDR: &str = \"127.0.0.1:4010\";"));
+    assert!(api_client_rs.contains("(\"GET\", \"http://127.0.0.1:4010/api/state\")"));
+    assert!(api_client_rs.contains("(\"POST\", \"http://127.0.0.1:4010/api/tasks\")"));
+    assert!(api_client_rs.contains("pub fn fetch_backend_state()"));
+    assert!(api_client_rs.contains("pub fn post_create_task("));
+    assert!(api_client_rs.contains("pub fn post_move_kanban_card("));
+
+    let effects_rs =
+        fs::read_to_string(target_dir.join("src/app/effects.rs")).expect("read src/app/effects.rs");
+    assert!(effects_rs.contains("pub fn sync_from_mock_backend()"));
+
+    let _ = fs::remove_dir_all(&target_dir);
+}

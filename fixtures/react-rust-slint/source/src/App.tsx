@@ -25,9 +25,13 @@ export function App() {
 
   useEffect(() => {
     const savedTheme = window.localStorage.getItem('mae-desktop-theme');
-    fetch('/api/tasks').then(() => {
+    fetch('http://127.0.0.1:4010/api/state').then(() => {
       dispatch({ type: 'LOADED', theme: savedTheme });
     });
+    fetch('http://127.0.0.1:4010/api/tasks', { method: 'POST' });
+    fetch('http://127.0.0.1:4010/api/kanban/move', { method: 'POST' });
+    fetch('http://127.0.0.1:4010/api/notifications/read-all', { method: 'POST' });
+    fetch('http://127.0.0.1:4010/api/settings', { method: 'POST' });
   }, [activeRoute]);
 
   return (

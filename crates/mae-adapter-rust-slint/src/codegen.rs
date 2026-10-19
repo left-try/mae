@@ -105,11 +105,17 @@ impl TargetAdapterPort for RustSlintTargetAdapter {
         let lib_rs = generate_lib_rs(has_windows_subsystem);
         write_file(&root, "src/lib.rs", &lib_rs, &mut files_generated)?;
 
-        // 5. src/app/{mod,state,events,reducer,effects,navigation}.rs
+        // 5. src/app/{mod,api_client,state,events,reducer,effects,navigation}.rs
         write_file(
             &root,
             "src/app/mod.rs",
             &generate_app_mod_rs(),
+            &mut files_generated,
+        )?;
+        write_file(
+            &root,
+            "src/app/api_client.rs",
+            &generate_api_client_rs(model),
             &mut files_generated,
         )?;
         write_file(
@@ -442,13 +448,99 @@ fn generate_lib_rs(has_windows_subsystem: bool) -> String {
 }
 
 fn generate_app_mod_rs() -> String {
-    r#"pub mod effects;
+    r#"pub mod api_client;
+pub mod effects;
 pub mod events;
 pub mod navigation;
 pub mod reducer;
 pub mod state;
 "#
     .to_string()
+}
+
+fn generate_api_client_rs(model: &SemanticUiModel) -> String {
+    let endpoints_list: Vec<String> = model
+        .api_endpoints
+        .iter()
+        .map(|ep| format!("(\"{}\", \"{}\")", ep.method, ep.url_or_path))
+        .collect();
+
+    let template = r#"use std::io::{Read, Write};
+use std::net::{SocketAddr, TcpStream};
+use std::time::Duration;
+
+/// Default shared mock backend address used by both React and migrated Rust + Slint.
+pub const BACKEND_ADDR: &str = "127.0.0.1:4010";
+
+/// HTTP API endpoints extracted from the React source application.
+pub const DECLARED_API_ENDPOINTS: &[(&str, &str)] = &[__ENDPOINTS__];
+
+/// Sends a pure-Rust HTTP/1.1 request to the shared mock backend (`127.0.0.1:4010`).
+pub fn send_http_json(method: &str, path: &str, json_body: Option<&str>) -> Result<String, String> {
+    let addr: SocketAddr = BACKEND_ADDR
+        .parse()
+        .map_err(|e| format!("Invalid backend address: {e}"))?;
+    let mut stream = TcpStream::connect_timeout(&addr, Duration::from_millis(500))
+        .map_err(|e| format!("Failed to connect to mock backend at {BACKEND_ADDR}: {e}"))?;
+    let _ = stream.set_read_timeout(Some(Duration::from_millis(1000)));
+    let _ = stream.set_write_timeout(Some(Duration::from_millis(1000)));
+
+    let body = json_body.unwrap_or("");
+    let request = if body.is_empty() {
+        format!(
+            "{method} {path} HTTP/1.1\r\nHost: {BACKEND_ADDR}\r\nAccept: application/json\r\nConnection: close\r\n\r\n"
+        )
+    } else {
+        format!(
+            "{method} {path} HTTP/1.1\r\nHost: {BACKEND_ADDR}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        )
+    };
+
+    stream
+        .write_all(request.as_bytes())
+        .map_err(|e| format!("Failed writing HTTP request: {e}"))?;
+
+    let mut raw_response = String::new();
+    stream
+        .read_to_string(&mut raw_response)
+        .map_err(|e| format!("Failed reading HTTP response: {e}"))?;
+
+    if let Some((_, body_part)) = raw_response.split_once("\r\n\r\n") {
+        Ok(body_part.trim().to_string())
+    } else {
+        Ok(raw_response)
+    }
+}
+
+pub fn fetch_backend_state() -> Result<String, String> {
+    send_http_json("GET", "/api/state", None)
+}
+
+pub fn post_create_task(title: &str) -> Result<String, String> {
+    let escaped = title.replace('"', "'");
+    let payload = format!("{{\"title\":\"{escaped}\"}}");
+    send_http_json("POST", "/api/tasks", Some(&payload))
+}
+
+pub fn post_move_kanban_card(card_id: &str, column: &str) -> Result<String, String> {
+    let payload = format!("{{\"card_id\":\"{card_id}\",\"column\":\"{column}\"}}");
+    send_http_json("POST", "/api/kanban/move", Some(&payload))
+}
+
+pub fn post_mark_notifications_read() -> Result<String, String> {
+    send_http_json("POST", "/api/notifications/read-all", Some("{}"))
+}
+
+pub fn post_update_settings(wip_limit: u32, compact_mode: bool, notifications_muted: bool) -> Result<String, String> {
+    let payload = format!(
+        "{{\"wip_limit\":{wip_limit},\"compact_mode\":{compact_mode},\"notifications_muted\":{notifications_muted}}}"
+    );
+    send_http_json("POST", "/api/settings", Some(&payload))
+}
+"#;
+
+    template.replace("__ENDPOINTS__", &endpoints_list.join(", "))
 }
 
 fn generate_state_rs(model: &SemanticUiModel) -> String {
@@ -629,7 +721,8 @@ fn generate_effects_rs(model: &SemanticUiModel) -> String {
         .map(|e| format!("\"{}\"", e.id))
         .collect();
     format!(
-        r#"use crate::app::events::AppEvent;
+        r#"use crate::app::api_client;
+use crate::app::events::AppEvent;
 
 /// Declared effect bindings migrated from React `useEffect`.
 pub const DECLARED_EFFECTS: &[&str] = &[{}];
@@ -643,6 +736,15 @@ pub fn run_mock_fetch_effect(simulate_error: bool) -> AppEvent {{
             "Verify native Slint UI".to_string(),
             "Preserve migration contracts".to_string(),
         ])
+    }}
+}}
+
+/// Connects to the shared live mock backend (`127.0.0.1:4010`) and synchronizes tasks.
+pub fn sync_from_mock_backend() -> AppEvent {{
+    match api_client::fetch_backend_state() {{
+        Ok(payload) if !payload.is_empty() => AppEvent::AsyncLoadSucceeded(vec![payload]),
+        Ok(_) => run_mock_fetch_effect(false),
+        Err(err) => AppEvent::AsyncLoadFailed(err),
     }}
 }}
 "#,

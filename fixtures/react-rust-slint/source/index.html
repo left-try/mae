@@ -1,0 +1,340 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Desktop Productivity Hub — React Source App (Connected to Mock Backend :4010)</title>
+  <link rel="stylesheet" href="src/styles/theme.css" />
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 16px;
+      background: #0f172a;
+      color: #f8fafc;
+      font-family: Inter, system-ui, -apple-system, sans-serif;
+      font-size: 14px;
+    }
+    .app-shell {
+      max-width: 1240px;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      padding: 16px;
+      background: #1e293b;
+      border-radius: 8px;
+      border: 1px solid #334155;
+    }
+    .header-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid #334155;
+    }
+    .nav-tabs {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    button {
+      background: #334155;
+      color: #f8fafc;
+      border: 1px solid #475569;
+      border-radius: 8px;
+      padding: 8px 14px;
+      font-size: 14px;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    button:hover { background: #475569; }
+    button.active, button.primary {
+      background: #2563eb;
+      border-color: #3b82f6;
+      font-weight: 600;
+    }
+    input[type="text"], select {
+      background: #0f172a;
+      color: #f8fafc;
+      border: 1px solid #475569;
+      border-radius: 8px;
+      padding: 8px 12px;
+      font-size: 14px;
+    }
+    .card {
+      background: #0f172a;
+      border: 1px solid #334155;
+      border-radius: 8px;
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .grid-3 {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+    }
+    .badge {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 8px;
+      font-size: 12px;
+      background: #1d4ed8;
+      color: #e0e7ff;
+    }
+    .progress-track {
+      width: 100%;
+      height: 10px;
+      background: #334155;
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .progress-fill {
+      height: 100%;
+      background: #2563eb;
+      border-radius: 8px;
+    }
+    .row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+  </style>
+</head>
+<body>
+  <div class="app-shell">
+    <div class="header-bar">
+      <div>
+        <h2 style="margin:0;font-size:18px;">Desktop Productivity Hub (React Web Source)</h2>
+        <div id="backend-status" style="color:#94a3b8;font-size:12px;margin-top:4px;">Connecting to Shared Mock Backend http://127.0.0.1:4010 ...</div>
+      </div>
+      <div class="nav-tabs" id="nav-tabs">
+        <button class="active" onclick="setRoute('/')">Dashboard (/)</button>
+        <button onclick="setRoute('/tasks')">Tasks (/tasks)</button>
+        <button onclick="setRoute('/kanban')">Kanban (/kanban)</button>
+        <button onclick="setRoute('/analytics')">Analytics (/analytics)</button>
+        <button onclick="setRoute('/notifications')">Notifications (/notifications)</button>
+        <button onclick="setRoute('/settings')">Settings (/settings)</button>
+      </div>
+    </div>
+
+    <div class="row">
+      <input type="text" id="new-task-input" placeholder="Enter desktop task..." style="flex:1;" />
+      <select id="priority-select">
+        <option value="high">Priority: High</option>
+        <option value="critical">Priority: Critical</option>
+        <option value="medium">Priority: Medium</option>
+      </select>
+      <button class="primary" onclick="addTask()">Add Task (POST /api/tasks)</button>
+      <button onclick="completeAllTasks()">Complete All</button>
+      <button onclick="refreshFromBackend()">Sync Backend (GET /api/state)</button>
+    </div>
+
+    <div id="view-container"></div>
+  </div>
+
+  <script>
+    const BACKEND = 'http://127.0.0.1:4010';
+    let currentRoute = '/';
+    let appState = {
+      sync_revision: 0,
+      active_sprint: 'Sprint 14',
+      completion_percent: 78,
+      velocity_score: 92,
+      tasks: [],
+      kanban: [],
+      notifications: [],
+      settings: { wip_limit: 5, compact_mode: false, notifications_muted: false, theme_mode: 'dark-slate', time_range: '30d' }
+    };
+
+    async function refreshFromBackend() {
+      try {
+        const res = await fetch(BACKEND + '/api/state');
+        appState = await res.json();
+        document.getElementById('backend-status').innerText =
+          `Connected to Shared Mock Backend (${BACKEND}) • sync_revision=${appState.sync_revision} • active_route=${currentRoute}`;
+        render();
+      } catch (e) {
+        document.getElementById('backend-status').innerText = `Backend error: ${e.message}`;
+      }
+    }
+
+    async function addTask() {
+      const input = document.getElementById('new-task-input');
+      const prio = document.getElementById('priority-select').value;
+      const title = input.value.trim() || 'New Migrated Task';
+      input.value = '';
+      const res = await fetch(BACKEND + '/api/tasks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'create', title, priority: prio })
+      });
+      appState = await res.json();
+      render();
+    }
+
+    async function completeAllTasks() {
+      const res = await fetch(BACKEND + '/api/tasks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'complete_all' })
+      });
+      appState = await res.json();
+      render();
+    }
+
+    async function moveKanban(cardId, column) {
+      const res = await fetch(BACKEND + '/api/kanban/move', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ card_id: cardId, column })
+      });
+      appState = await res.json();
+      render();
+    }
+
+    async function markAllNotificationsRead() {
+      const res = await fetch(BACKEND + '/api/notifications/read-all', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({})
+      });
+      appState = await res.json();
+      render();
+    }
+
+    async function updateSettings(patch) {
+      const res = await fetch(BACKEND + '/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch)
+      });
+      appState = await res.json();
+      render();
+    }
+
+    function setRoute(route) {
+      currentRoute = route;
+      const buttons = document.querySelectorAll('#nav-tabs button');
+      const routes = ['/', '/tasks', '/kanban', '/analytics', '/notifications', '/settings'];
+      buttons.forEach((b, i) => {
+        b.className = routes[i] === route ? 'active' : '';
+      });
+      render();
+    }
+
+    function render() {
+      const el = document.getElementById('view-container');
+      const unread = appState.notifications.filter(n => !n.read).length;
+      if (currentRoute === '/') {
+        el.innerHTML = `
+          <div class="grid-3">
+            <div class="card">
+              <div class="row"><span class="badge">${appState.active_sprint}</span><strong>Sprint Progress</strong></div>
+              <div class="progress-track"><div class="progress-fill" style="width:${appState.completion_percent}%"></div></div>
+              <div>Completion: ${appState.completion_percent}% • Tasks: ${appState.tasks.length}</div>
+            </div>
+            <div class="card">
+              <strong>Velocity & Health</strong>
+              <div>Velocity Score: <b>${appState.velocity_score}</b> • Unread Alerts: <b>${unread}</b></div>
+              <div class="row">
+                <button onclick="setRoute('/kanban')">Open Kanban</button>
+                <button onclick="setRoute('/analytics')">View Analytics</button>
+              </div>
+            </div>
+            <div class="card">
+              <strong>Live Tasks (${appState.tasks.length})</strong>
+              ${appState.tasks.map(t => `<div>${t.done ? '✅' : '🟦'} [${t.priority}] ${t.title}</div>`).join('')}
+            </div>
+          </div>
+        `;
+      } else if (currentRoute === '/tasks') {
+        el.innerHTML = `
+          <div class="card">
+            <h3>Tasks Backlog (${appState.tasks.length} items)</h3>
+            ${appState.tasks.map(t => `
+              <div class="row" style="justify-content:space-between;padding:8px;background:#1e293b;border-radius:8px;">
+                <span>${t.done ? '✅' : '⬜'} <b>${t.title}</b></span>
+                <span class="badge">${t.priority}</span>
+              </div>
+            `).join('')}
+          </div>
+        `;
+      } else if (currentRoute === '/kanban') {
+        const cols = ['backlog', 'in_progress', 'done'];
+        el.innerHTML = `
+          <div class="row" style="margin-bottom:8px;">
+            <span>WIP Limit: <b>${appState.settings.wip_limit}</b></span>
+            <input type="range" min="1" max="15" value="${appState.settings.wip_limit}" onchange="updateSettings({wip_limit: Number(this.value)})" />
+          </div>
+          <div class="grid-3">
+            ${cols.map(col => `
+              <div class="card">
+                <h4 style="margin:0;text-transform:uppercase;">${col}</h4>
+                ${appState.kanban.filter(c => c.column === col).map(c => `
+                  <div class="card" style="background:#1e293b;">
+                    <div><b>${c.title}</b></div>
+                    <div class="row">
+                      <button onclick="moveKanban('${c.id}', 'backlog')">Backlog</button>
+                      <button onclick="moveKanban('${c.id}', 'in_progress')">In Progress</button>
+                      <button onclick="moveKanban('${c.id}', 'done')">Done</button>
+                    </div>
+                  </div>
+                `).join('')}
+              </div>
+            `).join('')}
+          </div>
+        `;
+      } else if (currentRoute === '/analytics') {
+        el.innerHTML = `
+          <div class="card">
+            <h3>Migration & Delivery Analytics (Range: ${appState.settings.time_range})</h3>
+            <div class="row">
+              <button class="${appState.settings.time_range === '7d' ? 'active' : ''}" onclick="updateSettings({time_range:'7d'})">7 Days</button>
+              <button class="${appState.settings.time_range === '30d' ? 'active' : ''}" onclick="updateSettings({time_range:'30d'})">30 Days</button>
+              <button class="${appState.settings.time_range === '90d' ? 'active' : ''}" onclick="updateSettings({time_range:'90d'})">90 Days</button>
+            </div>
+            <div>Velocity Score: <b>${appState.velocity_score}</b> • Sync Revision: <b>${appState.sync_revision}</b></div>
+            <div class="progress-track"><div class="progress-fill" style="width:${appState.velocity_score}%"></div></div>
+          </div>
+        `;
+      } else if (currentRoute === '/notifications') {
+        el.innerHTML = `
+          <div class="card">
+            <div class="row" style="justify-content:space-between;">
+              <h3 style="margin:0;">Notifications (${unread} unread)</h3>
+              <button class="primary" onclick="markAllNotificationsRead()">Mark All Read (POST /api/notifications/read-all)</button>
+            </div>
+            ${appState.notifications.map(n => `
+              <div style="padding:8px;background:#1e293b;border-radius:8px;">
+                ${n.read ? '✔️' : '🔔'} ${n.text}
+              </div>
+            `).join('')}
+          </div>
+        `;
+      } else if (currentRoute === '/settings') {
+        el.innerHTML = `
+          <div class="card">
+            <h3>Desktop Workspace Settings</h3>
+            <label class="row">
+              <input type="checkbox" ${appState.settings.compact_mode ? 'checked' : ''} onchange="updateSettings({compact_mode: this.checked})" />
+              Compact Layout Mode
+            </label>
+            <label class="row">
+              <input type="checkbox" ${appState.settings.notifications_muted ? 'checked' : ''} onchange="updateSettings({notifications_muted: this.checked})" />
+              Mute Desktop Notifications
+            </label>
+            <div>Theme Mode: <span class="badge">${appState.settings.theme_mode}</span> • Border Radius: <span class="badge">8px</span> • Default Scale: <span class="badge">14px (1.0x)</span></div>
+          </div>
+        `;
+      }
+    }
+
+    refreshFromBackend();
+    setInterval(refreshFromBackend, 2000);
+  </script>
+</body>
+</html>
