@@ -1,0 +1,16 @@
+# Rust / Cargo build artifacts
+/target/
+**/target/
+
+# OKF generated local index (never commit; rebuild via okf-agent bundle index)
+.okf-index/
+universal-migration-engine-docs/.okf-index/
+
+# Node / JS tooling
+node_modules/
+dist/
+
+# OS / Editor files
+.DS_Store
+*.swp
+*~

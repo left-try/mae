@@ -1,0 +1,25 @@
+contracts:
+  - id: todo.create
+    category: behavioral
+    severity: critical
+    preconditions: [todo_screen_open]
+    action:
+      type: submit_new_todo
+      value: "Write tests"
+    expected:
+      - todo_visible: "Write tests"
+      - input_empty: true
+
+  - id: app.native-ui
+    category: native-compliance
+    severity: critical
+    expected:
+      - slint_ui: true
+      - embedded_browser: false
+
+  - id: todo.default-visual
+    category: visual
+    severity: high
+    scenario: default
+    tolerance:
+      policy: project-defined

@@ -1,0 +1,9 @@
+# OKF local generated index/wiki
+.okf-index/
+
+# Migration run state should be reviewed before deciding whether to commit.
+# Usually local:
+.aamf/migration/
+
+# Generated target experiments
+migration-output/

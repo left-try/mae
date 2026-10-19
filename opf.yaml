@@ -1,0 +1,20 @@
+schema: opf-registry/1
+prompts:
+  migration.planner:
+    source: prompts/migration.planner.md
+    renderer: opf
+  migration.code-migrator:
+    source: prompts/migration.code-migrator.md
+    renderer: opf
+  migration.parity-verifier:
+    source: prompts/migration.parity-verifier.md
+    renderer: opf
+  migration.failure-resolver:
+    source: prompts/migration.failure-resolver.md
+    renderer: opf
+  migration.ui-semantic-analyzer:
+    source: prompts/migration.ui-semantic-analyzer.md
+    renderer: opf
+  migration.implementation-style:
+    source: prompts/migration.implementation-style.md
+    renderer: opf

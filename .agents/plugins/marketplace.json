@@ -1,0 +1,23 @@
+{
+  "name": "mae-local",
+  "interface": {
+    "displayName": "MAE project plugins"
+  },
+  "plugins": [
+    {
+      "name": "ponytail",
+      "source": {
+        "source": "local",
+        "path": "./universal-migration-engine-docs/vendor/ponytail"
+      },
+      "interface": {
+        "displayName": "Ponytail v5.3.2"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

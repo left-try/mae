@@ -1,0 +1,52 @@
+{
+  "projectName": "react-to-rust-slint-demo",
+  "source": {
+    "path": "./fixtures/react-rust-slint/source",
+    "language": "typescript",
+    "languages": [
+      "typescript"
+    ],
+    "includePatterns": [
+      "src/**/*.ts",
+      "src/**/*.tsx"
+    ],
+    "excludePatterns": [
+      "node_modules",
+      ".git",
+      "dist",
+      "build"
+    ]
+  },
+  "target": {
+    "language": "rust",
+    "framework": "slint",
+    "outputPath": "./migration-output/react-rust-slint",
+    "buildCommand": "cargo build --locked",
+    "testCommand": "cargo test --locked",
+    "formatCommand": "cargo fmt --check",
+    "lintCommand": "cargo clippy -- -D warnings"
+  },
+  "models": {
+    "default": "CONFIGURE_AT_RUNTIME",
+    "routing": {
+      "enabled": true,
+      "heavyThreshold": 40,
+      "criticalThreshold": 70,
+      "escalateOnRetryAttempt": 2
+    }
+  },
+  "options": {
+    "executionMode": "wave-barrier",
+    "maxParallelAgents": 3,
+    "maxRetriesPerTask": 3,
+    "maxLinesPerTask": 800,
+    "reuseKb": true,
+    "continueOnBlocked": true,
+    "qualityPolicy": "strict"
+  },
+  "guidance": [
+    "Produce a native Rust + Slint target; do not use WebView, Electron, or a browser-rendered UI.",
+    "Do not remove unsupported features silently; emit explicit migration gaps.",
+    "Preserve required migration contracts before performance optimization."
+  ]
+}
