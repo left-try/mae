@@ -2,6 +2,7 @@
 members = [
     "crates/mae-domain",
     "crates/mae-application",
+    "crates/mae-adapter-react",
 ]
 resolver = "2"
 
