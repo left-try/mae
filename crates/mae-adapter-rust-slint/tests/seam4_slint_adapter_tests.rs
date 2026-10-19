@@ -182,3 +182,37 @@ fn emit_target_code_advances_artifact_revision_monotonically() {
 
     let _ = fs::remove_dir_all(&target_dir);
 }
+
+#[test]
+fn scaffold_target_generates_ubuntu_desktop_entry_and_wayland_x11_backend() {
+    let target_dir = unique_temp_dir("ubuntu_scaffold");
+    let mut model = sample_windows_semantic_model();
+    model.platform = TargetPlatform::UbuntuDesktop;
+
+    let adapter = RustSlintTargetAdapter::with_crate_name("ubuntu-task-tracker");
+    let summary = adapter
+        .scaffold_target(&model, target_dir.to_str().unwrap())
+        .expect("scaffold ubuntu target");
+
+    assert_eq!(summary.target_crate_name, "ubuntu-task-tracker");
+    assert!(!summary.has_windows_subsystem);
+
+    let cargo_toml = fs::read_to_string(target_dir.join("Cargo.toml")).expect("read Cargo.toml");
+    assert!(cargo_toml.contains("target_platform = \"UBUNTU_DESKTOP\""));
+    assert!(cargo_toml.contains("window_backend = \"wayland-x11-winit\""));
+    assert!(cargo_toml.contains("desktop_entry = \"packaging/ubuntu-task-tracker.desktop\""));
+
+    let desktop_path = target_dir.join("packaging/ubuntu-task-tracker.desktop");
+    assert!(desktop_path.exists());
+    let desktop_entry = fs::read_to_string(&desktop_path).expect("read .desktop");
+    assert!(desktop_entry.contains("[Desktop Entry]"));
+    assert!(desktop_entry.contains("Type=Application"));
+    assert!(desktop_entry.contains("Exec=ubuntu-task-tracker"));
+
+    assert!(target_dir.join("packaging/ubuntu-deps.sh").exists());
+
+    let main_rs = fs::read_to_string(target_dir.join("src/main.rs")).expect("read main.rs");
+    assert!(main_rs.contains("LINUX_WINDOW_BACKEND"));
+
+    let _ = fs::remove_dir_all(&target_dir);
+}

@@ -1,9 +1,12 @@
 use std::fmt;
 
+use crate::ports::DomainError;
+
 /// Target deployment platform for migrated desktop application.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum TargetPlatform {
     WindowsDesktop,
+    UbuntuDesktop,
     LinuxDesktop,
     CrossPlatformDesktop,
 }
@@ -12,8 +15,42 @@ impl TargetPlatform {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::WindowsDesktop => "WINDOWS_DESKTOP",
+            Self::UbuntuDesktop => "UBUNTU_DESKTOP",
             Self::LinuxDesktop => "LINUX_DESKTOP",
             Self::CrossPlatformDesktop => "CROSS_PLATFORM_DESKTOP",
+        }
+    }
+
+    pub fn parse(raw: &str) -> Result<Self, DomainError> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "windows" | "win" | "windows-desktop" | "windows_desktop" => Ok(Self::WindowsDesktop),
+            "ubuntu" | "ubuntu-desktop" | "ubuntu_desktop" | "debian" => Ok(Self::UbuntuDesktop),
+            "linux" | "linux-desktop" | "linux_desktop" => Ok(Self::LinuxDesktop),
+            "cross-platform" | "cross_platform" | "all" | "multiplatform" => {
+                Ok(Self::CrossPlatformDesktop)
+            }
+            other => Err(DomainError::PortError(format!(
+                "Unsupported target platform '{other}'. Expected windows, ubuntu, linux, or cross-platform"
+            ))),
+        }
+    }
+
+    pub fn requires_windows_subsystem(&self) -> bool {
+        matches!(self, Self::WindowsDesktop | Self::CrossPlatformDesktop)
+    }
+
+    pub fn requires_linux_desktop_entry(&self) -> bool {
+        matches!(
+            self,
+            Self::UbuntuDesktop | Self::LinuxDesktop | Self::CrossPlatformDesktop
+        )
+    }
+
+    pub fn native_window_backend(&self) -> &'static str {
+        match self {
+            Self::WindowsDesktop => "win32-winit",
+            Self::UbuntuDesktop | Self::LinuxDesktop => "wayland-x11-winit",
+            Self::CrossPlatformDesktop => "winit-multiplatform",
         }
     }
 }

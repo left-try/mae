@@ -84,10 +84,8 @@ impl TargetAdapterPort for RustSlintTargetAdapter {
             .map_err(|e| DomainError::PortError(format!("Failed to create tests: {e}")))?;
 
         let crate_name = sanitize_crate_name(&self.config.crate_name);
-        let has_windows_subsystem = matches!(
-            model.platform,
-            TargetPlatform::WindowsDesktop | TargetPlatform::CrossPlatformDesktop
-        );
+        let has_windows_subsystem = model.platform.requires_windows_subsystem();
+        let has_linux_desktop = model.platform.requires_linux_desktop_entry();
 
         let mut files_generated = Vec::new();
 
@@ -99,8 +97,8 @@ impl TargetAdapterPort for RustSlintTargetAdapter {
         let build_rs = generate_build_rs();
         write_file(&root, "build.rs", &build_rs, &mut files_generated)?;
 
-        // 3. src/main.rs (with Windows GUI subsystem attribute when targeting Windows)
-        let main_rs = generate_main_rs(&self.config, has_windows_subsystem);
+        // 3. src/main.rs (with Windows GUI subsystem attribute and/or Linux Wayland/X11 backend config)
+        let main_rs = generate_main_rs(&self.config, has_windows_subsystem, has_linux_desktop);
         write_file(&root, "src/main.rs", &main_rs, &mut files_generated)?;
 
         // 4. src/lib.rs (exposes app module for headless integration tests)
@@ -185,7 +183,23 @@ impl TargetAdapterPort for RustSlintTargetAdapter {
             &mut files_generated,
         )?;
 
-        // 10. tests/target_behavior_tests.rs
+        // 10. Ubuntu / Linux XDG desktop packaging when targeting UbuntuDesktop, LinuxDesktop, or CrossPlatformDesktop
+        if has_linux_desktop {
+            let desktop_rel = format!("packaging/{crate_name}.desktop");
+            let desktop_entry =
+                generate_ubuntu_desktop_entry(&crate_name, &self.config.window_title);
+            write_file(&root, &desktop_rel, &desktop_entry, &mut files_generated)?;
+
+            let ubuntu_deps = generate_ubuntu_deps_script();
+            write_file(
+                &root,
+                "packaging/ubuntu-deps.sh",
+                &ubuntu_deps,
+                &mut files_generated,
+            )?;
+        }
+
+        // 11. tests/target_behavior_tests.rs
         write_file(
             &root,
             "tests/target_behavior_tests.rs",
@@ -299,6 +313,11 @@ fn sanitize_identifier(raw: &str) -> String {
 }
 
 fn generate_cargo_toml(crate_name: &str, platform: TargetPlatform) -> String {
+    let desktop_entry_line = if platform.requires_linux_desktop_entry() {
+        format!("desktop_entry = \"packaging/{crate_name}.desktop\"\n")
+    } else {
+        String::new()
+    };
     format!(
         r#"[package]
 name = "{crate_name}"
@@ -309,11 +328,14 @@ edition = "2021"
 ui_entry = "ui/app.slint"
 theme_tokens = "ui/theme/tokens.slint"
 target_platform = "{platform}"
+window_backend = "{window_backend}"
 native_renderer = "slint-femtovg-skia"
 embedded_browser = false
-"#,
+{desktop_entry_line}"#,
         crate_name = crate_name,
-        platform = platform.as_str()
+        platform = platform.as_str(),
+        window_backend = platform.native_window_backend(),
+        desktop_entry_line = desktop_entry_line
     )
 }
 
@@ -332,9 +354,18 @@ fn main() {
     .to_string()
 }
 
-fn generate_main_rs(config: &RustSlintAdapterConfig, has_windows_subsystem: bool) -> String {
+fn generate_main_rs(
+    config: &RustSlintAdapterConfig,
+    has_windows_subsystem: bool,
+    has_linux_desktop: bool,
+) -> String {
     let win_attr = if has_windows_subsystem {
         "#![cfg_attr(target_os = \"windows\", windows_subsystem = \"windows\")]\n"
+    } else {
+        ""
+    };
+    let linux_attr = if has_linux_desktop {
+        "#[cfg(target_os = \"linux\")]\npub const LINUX_WINDOW_BACKEND: &str = \"wayland-x11-winit\";\n\n"
     } else {
         ""
     };
@@ -345,7 +376,7 @@ use app::events::AppEvent;
 use app::reducer::reduce;
 use app::state::AppState;
 
-fn main() {{
+{linux_attr}fn main() {{
     let mut state = AppState::default();
     reduce(&mut state, AppEvent::Initialize);
     println!(
@@ -358,10 +389,45 @@ fn main() {{
 }}
 "#,
         win_attr = win_attr,
+        linux_attr = linux_attr,
         title = config.window_title,
         width = config.window_width,
         height = config.window_height
     )
+}
+
+fn generate_ubuntu_desktop_entry(crate_name: &str, window_title: &str) -> String {
+    format!(
+        r#"[Desktop Entry]
+Type=Application
+Version=1.0
+Name={window_title}
+Comment=Native Rust + Slint Desktop Application migrated by MAE
+Exec={crate_name}
+Icon={crate_name}
+Terminal=false
+Categories=Utility;Development;
+StartupWMClass={crate_name}
+"#
+    )
+}
+
+fn generate_ubuntu_deps_script() -> String {
+    r#"#!/usr/bin/env bash
+set -euo pipefail
+# Native Ubuntu / Debian system packages for Slint (Wayland + X11 + FemtoVG/Skia)
+sudo apt-get update
+sudo apt-get install -y \
+    build-essential \
+    pkg-config \
+    libfontconfig1-dev \
+    libxcb-shape0-dev \
+    libxcb-xfixes0-dev \
+    libxkbcommon-dev \
+    libwayland-dev \
+    libgl1-mesa-dev
+"#
+    .to_string()
 }
 
 fn generate_lib_rs(has_windows_subsystem: bool) -> String {

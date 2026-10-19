@@ -2,7 +2,7 @@
 //!
 //! Wires together `mae-domain`, `mae-application`, `mae-adapter-react`,
 //! `mae-adapter-rust-slint`, and `mae-verification` into the complete
-//! React -> Native Windows Rust + Slint frontend migration engine.
+//! React -> Native Desktop (Windows & Ubuntu/Linux) Rust + Slint frontend migration engine.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -27,7 +27,7 @@ use mae_verification::{
     VisualParityVerifier, VisualSnapshot,
 };
 
-/// Configuration for running the full React -> Windows Rust + Slint migration pipeline.
+/// Configuration for running the full React -> Native Desktop (Windows / Ubuntu / Cross-Platform) Rust + Slint migration pipeline.
 #[derive(Debug, Clone)]
 pub struct MvpPipelineConfig {
     pub repo_root: PathBuf,
@@ -36,6 +36,7 @@ pub struct MvpPipelineConfig {
     pub artifacts_dir: PathBuf,
     pub checkpoint_path: Option<PathBuf>,
     pub target_crate_name: String,
+    pub target_platform: TargetPlatform,
     pub execute_cargo_test_on_target: bool,
 }
 
@@ -53,6 +54,7 @@ impl MvpPipelineConfig {
             artifacts_dir: artifacts_dir.into(),
             checkpoint_path: None,
             target_crate_name: "desktop-productivity-hub".to_string(),
+            target_platform: TargetPlatform::WindowsDesktop,
             execute_cargo_test_on_target: false,
         }
     }
@@ -62,13 +64,18 @@ impl MvpPipelineConfig {
         self
     }
 
+    pub fn with_target_platform(mut self, platform: TargetPlatform) -> Self {
+        self.target_platform = platform;
+        self
+    }
+
     pub fn with_cargo_test_execution(mut self, enabled: bool) -> Self {
         self.execute_cargo_test_on_target = enabled;
         self
     }
 }
 
-/// Complete outcome of an end-to-end React -> Windows Rust + Slint migration run.
+/// Complete outcome of an end-to-end React -> Native Desktop Rust + Slint migration run.
 #[derive(Debug, Clone)]
 pub struct MvpPipelineOutcome {
     pub run_report: MigrationRunReport,
@@ -79,9 +86,25 @@ pub struct MvpPipelineOutcome {
 }
 
 /// Runs Stage A–D source discovery, static semantic extraction, runtime baseline merge,
-/// and Sanka-inspired capability & gap classification on a React project directory.
+/// and Sanka-inspired capability & gap classification on a React project directory targeting WindowsDesktop.
 pub fn analyze_react_fixture(
     source_dir: &Path,
+) -> Result<
+    (
+        SemanticUiModel,
+        CapabilityReport,
+        Option<RuntimeTraceBaseline>,
+    ),
+    DomainError,
+> {
+    analyze_react_fixture_for_platform(source_dir, TargetPlatform::WindowsDesktop)
+}
+
+/// Runs Stage A–D source discovery, static semantic extraction, runtime baseline merge,
+/// and Sanka-inspired capability & gap classification on a React project directory for a given `TargetPlatform`.
+pub fn analyze_react_fixture_for_platform(
+    source_dir: &Path,
+    platform: TargetPlatform,
 ) -> Result<
     (
         SemanticUiModel,
@@ -94,7 +117,7 @@ pub fn analyze_react_fixture(
         .to_str()
         .ok_or_else(|| DomainError::PortError("Invalid UTF-8 source path".to_string()))?;
 
-    let adapter = ReactSourceAdapter::new(TargetPlatform::WindowsDesktop);
+    let adapter = ReactSourceAdapter::new(platform);
     let mut model = adapter.extract_semantics(source_str)?;
 
     let baseline_path = source_dir.join("runtime-baseline.json");
@@ -124,7 +147,7 @@ pub fn analyze_react_fixture(
     Ok((model, capability_report, runtime_baseline))
 }
 
-/// Builds the canonical reviewed `MigrationAggregate` (tasks + contracts) for a React -> Windows Rust + Slint migration.
+/// Builds the canonical reviewed `MigrationAggregate` (tasks + contracts) for a React -> Desktop Rust + Slint migration.
 pub fn build_mvp_migration_aggregate(
     migration_id: &str,
     model: &SemanticUiModel,
@@ -137,8 +160,8 @@ pub fn build_mvp_migration_aggregate(
     // Register 4 core contracts: NativeCompliance, Build, Behavioral, Visual
     let c_native = Contract::new(
         ContractId::new("contract.native_compliance"),
-        "Windows Native Rust + Slint Compliance",
-        "Target must be a genuine native Rust + Slint Windows GUI application without WebView or Electron",
+        "Native Desktop Rust + Slint Compliance",
+        "Target must be a genuine native Rust + Slint GUI application (Windows/Ubuntu) without WebView or Electron",
         VerificationCategory::NativeCompliance,
         ContractSeverity::Critical,
     );
@@ -211,9 +234,22 @@ pub fn build_mvp_migration_aggregate(
     aggregate
 }
 
-/// Constructs the standard independent verifier suite for the MVP pipeline.
+/// Constructs the standard independent verifier suite for the MVP pipeline targeting `WindowsDesktop`.
 pub fn build_mvp_verifiers(
     target_dir: &Path,
+    execute_cargo_test: bool,
+) -> Vec<Box<dyn VerifierPluginPort>> {
+    build_mvp_verifiers_for_platform(
+        target_dir,
+        TargetPlatform::WindowsDesktop,
+        execute_cargo_test,
+    )
+}
+
+/// Constructs the standard independent verifier suite for a specific `TargetPlatform`.
+pub fn build_mvp_verifiers_for_platform(
+    target_dir: &Path,
+    platform: TargetPlatform,
     execute_cargo_test: bool,
 ) -> Vec<Box<dyn VerifierPluginPort>> {
     let declared_scenarios = vec![
@@ -257,7 +293,7 @@ pub fn build_mvp_verifiers(
     );
 
     vec![
-        Box::new(NativeComplianceVerifier::new(target_dir, true)),
+        Box::new(NativeComplianceVerifier::for_platform(target_dir, platform)),
         Box::new(BuildVerifier::new(target_dir, execute_cargo_test)),
         Box::new(BehavioralDifferentialVerifier::new(
             declared_scenarios,
@@ -268,12 +304,12 @@ pub fn build_mvp_verifiers(
     ]
 }
 
-/// Runs the complete end-to-end React -> Windows Rust + Slint migration pipeline.
+/// Runs the complete end-to-end React -> Native Desktop (Windows / Ubuntu / Cross-Platform) Rust + Slint migration pipeline.
 pub fn run_full_migration_pipeline(
     config: &MvpPipelineConfig,
 ) -> Result<MvpPipelineOutcome, DomainError> {
     let (semantic_model, capability_report, runtime_baseline) =
-        analyze_react_fixture(&config.source_dir)?;
+        analyze_react_fixture_for_platform(&config.source_dir, config.target_platform)?;
 
     let mut aggregate = build_mvp_migration_aggregate(
         "mig-v01-react-rust-slint",
@@ -284,12 +320,16 @@ pub fn run_full_migration_pipeline(
     let prompt_provider = Box::new(OpfPromptProvider::from_root(&config.repo_root)?);
     let knowledge_repo = Box::new(OkfKnowledgeRepository::new(config.repo_root.join(".okf")));
     let agent_backend = Box::new(DeterministicMockAgentBackend::new());
-    let source_adapter = Box::new(ReactSourceAdapter::new(TargetPlatform::WindowsDesktop));
+    let source_adapter = Box::new(ReactSourceAdapter::new(config.target_platform));
     let target_adapter = Box::new(RustSlintTargetAdapter::with_crate_name(
         &config.target_crate_name,
     ));
     let artifact_repo = Box::new(FileSystemArtifactRepository::new(&config.artifacts_dir));
-    let verifiers = build_mvp_verifiers(&config.target_dir, config.execute_cargo_test_on_target);
+    let verifiers = build_mvp_verifiers_for_platform(
+        &config.target_dir,
+        config.target_platform,
+        config.execute_cargo_test_on_target,
+    );
 
     let mut orchestrator = MigrationOrchestrator::new(
         prompt_provider,
@@ -326,43 +366,73 @@ pub fn run_full_migration_pipeline(
     })
 }
 
+fn extract_platform_flag(args: &[String]) -> Result<(TargetPlatform, Vec<String>), DomainError> {
+    let mut platform = TargetPlatform::WindowsDesktop;
+    let mut positional = Vec::new();
+    let mut idx = 0;
+    while idx < args.len() {
+        let arg = &args[idx];
+        if arg == "--platform" || arg == "-p" {
+            let val = args.get(idx + 1).ok_or_else(|| {
+                DomainError::PortError("Missing value after --platform flag".to_string())
+            })?;
+            platform = TargetPlatform::parse(val)?;
+            idx += 2;
+        } else if let Some(rest) = arg.strip_prefix("--platform=") {
+            platform = TargetPlatform::parse(rest)?;
+            idx += 1;
+        } else {
+            positional.push(arg.clone());
+            idx += 1;
+        }
+    }
+    Ok((platform, positional))
+}
+
 /// Supported CLI subcommands for the `mae` binary.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CliCommand {
     Analyze {
         source_dir: PathBuf,
+        platform: TargetPlatform,
     },
     Plan {
         source_dir: PathBuf,
+        platform: TargetPlatform,
     },
     Migrate {
         repo_root: PathBuf,
         source_dir: PathBuf,
         target_dir: PathBuf,
+        platform: TargetPlatform,
     },
     Verify {
         target_dir: PathBuf,
+        platform: TargetPlatform,
     },
     RunE2e {
         repo_root: PathBuf,
         source_dir: PathBuf,
         target_dir: PathBuf,
+        platform: TargetPlatform,
     },
 }
 
 /// Parses and executes CLI arguments, returning a formatted summary output.
 pub fn execute_cli_args(args: &[String]) -> Result<String, DomainError> {
-    let subcommand = args.get(1).map(String::as_str).unwrap_or("help");
+    let (platform, pos) = extract_platform_flag(args)?;
+    let subcommand = pos.get(1).map(String::as_str).unwrap_or("help");
     match subcommand {
         "analyze" => {
             let source_dir = PathBuf::from(
-                args.get(2)
+                pos.get(2)
                     .map(String::as_str)
                     .unwrap_or("fixtures/react-rust-slint/source"),
             );
-            let (model, report, _) = analyze_react_fixture(&source_dir)?;
+            let (model, report, _) = analyze_react_fixture_for_platform(&source_dir, platform)?;
             Ok(format!(
-                "MAE Analyze Complete: components={}, routes={}, state_fields={}, gaps={}",
+                "MAE Analyze Complete: platform={}, components={}, routes={}, state_fields={}, gaps={}",
+                model.platform,
                 model.components.len(),
                 model.routes.len(),
                 model.state_fields.len(),
@@ -371,11 +441,11 @@ pub fn execute_cli_args(args: &[String]) -> Result<String, DomainError> {
         }
         "plan" => {
             let source_dir = PathBuf::from(
-                args.get(2)
+                pos.get(2)
                     .map(String::as_str)
                     .unwrap_or("fixtures/react-rust-slint/source"),
             );
-            let (model, report, _) = analyze_react_fixture(&source_dir)?;
+            let (model, report, _) = analyze_react_fixture_for_platform(&source_dir, platform)?;
             let aggregate = build_mvp_migration_aggregate("mig-plan-cli", &model, &report);
             Ok(format!(
                 "MAE Plan Complete: tasks={}, contracts={}, platform={}",
@@ -385,32 +455,35 @@ pub fn execute_cli_args(args: &[String]) -> Result<String, DomainError> {
             ))
         }
         "verify" => {
-            let target_dir = PathBuf::from(args.get(2).map(String::as_str).unwrap_or("target/mvp"));
-            let native = NativeComplianceVerifier::new(&target_dir, true);
+            let target_dir = PathBuf::from(pos.get(2).map(String::as_str).unwrap_or("target/mvp"));
+            let native = NativeComplianceVerifier::for_platform(&target_dir, platform);
             let (status, violations) = native.inspect_target()?;
             Ok(format!(
-                "MAE Verify Complete: native_status={}, violations={}",
+                "MAE Verify Complete: platform={}, native_status={}, violations={}",
+                platform,
                 status,
                 violations.len()
             ))
         }
         "migrate" | "run-e2e" => {
-            let repo_root = PathBuf::from(args.get(2).map(String::as_str).unwrap_or("."));
+            let repo_root = PathBuf::from(pos.get(2).map(String::as_str).unwrap_or("."));
             let source_dir = PathBuf::from(
-                args.get(3)
+                pos.get(3)
                     .map(String::as_str)
                     .unwrap_or("fixtures/react-rust-slint/source"),
             );
             let target_dir = PathBuf::from(
-                args.get(4)
+                pos.get(4)
                     .map(String::as_str)
                     .unwrap_or("target/mae-e2e-slint-out"),
             );
             let artifacts_dir = target_dir.join(".mae-artifacts");
-            let config = MvpPipelineConfig::new(repo_root, source_dir, target_dir, artifacts_dir);
+            let config = MvpPipelineConfig::new(repo_root, source_dir, target_dir, artifacts_dir)
+                .with_target_platform(platform);
             let outcome = run_full_migration_pipeline(&config)?;
             Ok(format!(
-                "MAE E2E Migration Complete: success={}, health_score={:.2}, target_rev={}, evidence_records={}",
+                "MAE E2E Migration Complete: platform={}, success={}, health_score={:.2}, target_rev={}, evidence_records={}",
+                outcome.semantic_model.platform,
                 outcome.run_report.is_successful(),
                 outcome.run_report.health_score.score,
                 outcome.run_report.final_target_revision,
@@ -418,7 +491,7 @@ pub fn execute_cli_args(args: &[String]) -> Result<String, DomainError> {
             ))
         }
         _ => Ok(
-            "MAE v0.1 CLI — Commands: analyze <src> | plan <src> | migrate <root> <src> <out> | verify <out> | run-e2e <root> <src> <out>"
+            "MAE v0.1 CLI — Commands: analyze [--platform windows|ubuntu|cross-platform] <src> | plan [--platform ...] <src> | migrate [--platform ...] <root> <src> <out> | verify [--platform ...] <out> | run-e2e [--platform ...] <root> <src> <out>"
                 .to_string(),
         ),
     }
