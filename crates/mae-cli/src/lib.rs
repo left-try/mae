@@ -255,18 +255,33 @@ pub fn build_mvp_verifiers_for_platform(
     let declared_scenarios = vec![
         "scenario.navigate_routes".to_string(),
         "scenario.submit_and_filter_task".to_string(),
+        "scenario.kanban_board_and_wip_slider".to_string(),
+        "scenario.notifications_and_analytics_controls".to_string(),
         "scenario.async_load_tasks".to_string(),
     ];
 
     let traces = vec![
         ScenarioTrace::new("scenario.navigate_routes")
             .with_action("click:Navigate Tasks")
+            .with_action("click:Navigate Kanban")
+            .with_action("click:Navigate Analytics")
+            .with_action("click:Navigate Notifications")
             .with_action("click:Navigate Settings")
             .with_state("active_route", "/settings"),
         ScenarioTrace::new("scenario.submit_and_filter_task")
             .with_action("submit:New Task Form")
             .with_action("change:Search Tasks Input")
             .with_state("visible_items_count", "1"),
+        ScenarioTrace::new("scenario.kanban_board_and_wip_slider")
+            .with_action("click:Move to In Progress Button")
+            .with_action("change:WIP Limit Slider")
+            .with_state("card_column", "in_progress")
+            .with_state("wip_limit", "8"),
+        ScenarioTrace::new("scenario.notifications_and_analytics_controls")
+            .with_action("click:Mark All Read Button")
+            .with_action("click:Range 90 Days Tab")
+            .with_state("unread_count", "0")
+            .with_state("time_range", "90d"),
         ScenarioTrace::new("scenario.async_load_tasks")
             .with_action("effect:mount")
             .with_state("loading", "false")
@@ -427,10 +442,11 @@ pub fn execute_cli_args(args: &[String]) -> Result<String, DomainError> {
             );
             let (model, report, _) = analyze_react_fixture_for_platform(&source_dir, platform)?;
             Ok(format!(
-                "MAE Analyze Complete: platform={}, components={}, routes={}, state_fields={}, gaps={}",
+                "MAE Analyze Complete: platform={}, components={}, routes={}, ui_elements={}, state_fields={}, gaps={}",
                 model.platform,
                 model.components.len(),
                 model.routes.len(),
+                model.total_ui_elements(),
                 model.state_fields.len(),
                 report.gaps.len()
             ))
