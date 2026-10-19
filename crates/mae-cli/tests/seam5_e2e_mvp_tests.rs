@@ -338,12 +338,20 @@ fn mvp_ubuntu_desktop_full_e2e_pipeline_and_cli_flag() {
 
     assert!(e2e_out.contains("platform=UBUNTU_DESKTOP"));
     assert!(e2e_out.contains("success=true, health_score=1.00"));
+    assert!(e2e_out.contains("consistency=1.00"));
+    assert!(e2e_out.contains("total_tokens="));
 
-    // Verify generated Ubuntu XDG .desktop entry and Ubuntu dependency script exist
+    // Verify generated Ubuntu XDG .desktop entry, Ubuntu dependency script, and eval-report.json exist
     assert!(target_dir
         .join("packaging/desktop-productivity-hub.desktop")
         .exists());
     assert!(target_dir.join("packaging/ubuntu-deps.sh").exists());
+    let eval_json_path = target_dir.join(".mae-artifacts/eval-report.json");
+    assert!(eval_json_path.exists());
+    let eval_json = fs::read_to_string(&eval_json_path).unwrap();
+    assert!(eval_json.contains("\"overall_consistency_score\": 1.0000"));
+    assert!(eval_json.contains("\"source_ui_elements_count\": 67"));
+    assert!(eval_json.contains("\"target_ui_elements_count\": 67"));
 
     // Run `mae verify --platform ubuntu`
     let verify_out = execute_cli_args(&[

@@ -23,8 +23,8 @@ use mae_domain::{
     VerifierPluginPort,
 };
 use mae_verification::{
-    BehavioralDifferentialVerifier, BuildVerifier, NativeComplianceVerifier, ScenarioTrace,
-    VisualParityVerifier, VisualSnapshot,
+    BehavioralDifferentialVerifier, BuildVerifier, ConsistencyAndArchitectureEvaluator,
+    NativeComplianceVerifier, ScenarioTrace, VisualParityVerifier, VisualSnapshot,
 };
 
 /// Configuration for running the full React -> Native Desktop (Windows / Ubuntu / Cross-Platform) Rust + Slint migration pipeline.
@@ -366,7 +366,28 @@ pub fn run_full_migration_pipeline(
         .to_str()
         .ok_or_else(|| DomainError::PortError("Invalid target path".to_string()))?;
 
-    let run_report = orchestrator.run(&mut aggregate, source_str, target_str)?;
+    let mut run_report = orchestrator.run(&mut aggregate, source_str, target_str)?;
+    ConsistencyAndArchitectureEvaluator::evaluate_target_consistency(
+        &semantic_model,
+        &config.target_dir,
+        &mut run_report.eval_metrics,
+    )?;
+
+    fs::create_dir_all(&config.artifacts_dir).map_err(|e| {
+        DomainError::PortError(format!(
+            "Failed to create artifacts dir {}: {}",
+            config.artifacts_dir.display(),
+            e
+        ))
+    })?;
+    let eval_report_path = config.artifacts_dir.join("eval-report.json");
+    fs::write(&eval_report_path, run_report.eval_metrics.to_json_report()).map_err(|e| {
+        DomainError::PortError(format!(
+            "Failed to write eval-report.json to {}: {}",
+            eval_report_path.display(),
+            e
+        ))
+    })?;
 
     Ok(MvpPipelineOutcome {
         run_report,
@@ -493,13 +514,17 @@ pub fn execute_cli_args(args: &[String]) -> Result<String, DomainError> {
             let config = MvpPipelineConfig::new(repo_root, source_dir, target_dir, artifacts_dir)
                 .with_target_platform(platform);
             let outcome = run_full_migration_pipeline(&config)?;
+            let m = &outcome.run_report.eval_metrics;
             Ok(format!(
-                "MAE E2E Migration Complete: platform={}, success={}, health_score={:.2}, target_rev={}, evidence_records={}",
+                "MAE E2E Migration Complete: platform={}, success={}, health_score={:.2}, target_rev={}, evidence_records={}, total_tokens={}, duration_ms={:.3}, consistency={:.2}",
                 outcome.semantic_model.platform,
                 outcome.run_report.is_successful(),
                 outcome.run_report.health_score.score,
                 outcome.run_report.final_target_revision,
-                outcome.run_report.total_evidence_count
+                outcome.run_report.total_evidence_count,
+                m.total_tokens_estimated,
+                m.total_duration_ms(),
+                m.overall_consistency_score()
             ))
         }
         _ => Ok(

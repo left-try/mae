@@ -467,3 +467,33 @@ fn native_compliance_verifier_validates_ubuntu_desktop_entry_and_rejects_when_mi
 
     let _ = fs::remove_dir_all(&target_dir);
 }
+
+#[test]
+fn consistency_and_architecture_evaluator_scores_target_directory_accurately() {
+    let target_dir = unique_temp_dir("consistency_eval");
+    let model = sample_model();
+
+    let adapter = RustSlintTargetAdapter::with_crate_name("eval-slint-app");
+    adapter
+        .scaffold_target(&model, target_dir.to_str().unwrap())
+        .expect("scaffold eval target");
+
+    let mut metrics = mae_domain::MigrationEvalMetrics::new();
+    mae_verification::ConsistencyAndArchitectureEvaluator::evaluate_target_consistency(
+        &model,
+        &target_dir,
+        &mut metrics,
+    )
+    .expect("evaluate target consistency");
+
+    assert_eq!(metrics.component_name_consistency_ratio, 1.0);
+    assert_eq!(metrics.route_consistency_ratio, 1.0);
+    assert_eq!(metrics.state_field_consistency_ratio, 1.0);
+    assert_eq!(metrics.architecture_consistency_score, 1.0);
+    assert_eq!(metrics.overall_consistency_score(), 1.0);
+    assert!(metrics.missing_components.is_empty());
+    assert!(metrics.missing_routes.is_empty());
+    assert!(metrics.missing_state_fields.is_empty());
+
+    let _ = fs::remove_dir_all(&target_dir);
+}

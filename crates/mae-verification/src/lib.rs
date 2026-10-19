@@ -8,10 +8,12 @@
 
 pub mod behavioral_verifier;
 pub mod build_verifier;
+pub mod eval_verifier;
 pub mod native_compliance;
 pub mod visual_verifier;
 
 pub use behavioral_verifier::{BehavioralDifferentialVerifier, ScenarioTrace};
 pub use build_verifier::BuildVerifier;
+pub use eval_verifier::ConsistencyAndArchitectureEvaluator;
 pub use native_compliance::NativeComplianceVerifier;
 pub use visual_verifier::{VisualParityVerifier, VisualSnapshot};

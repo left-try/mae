@@ -1,11 +1,12 @@
 use std::path::PathBuf;
+use std::time::Instant;
 
 use mae_domain::{
     AcceptanceRejectionReason, AgentBackendPort, ArtifactRepositoryPort, ArtifactRevision,
     ContentHash, ContractId, DomainError, FailureKind, HealthScore, KnowledgeRepositoryPort,
-    MigrationAggregate, MigrationId, MigrationTask, PlanHash, PromptProviderPort, RecoveryDecision,
-    RecoveryPolicy, SourceAdapterPort, TargetAdapterPort, TaskId, TaskState, VerificationCategory,
-    VerifierPluginPort,
+    MigrationAggregate, MigrationEvalMetrics, MigrationId, MigrationTask, PlanHash,
+    PromptProviderPort, RecoveryDecision, RecoveryPolicy, SourceAdapterPort, TargetAdapterPort,
+    TaskId, TaskState, VerificationCategory, VerifierPluginPort,
 };
 
 use crate::aamf_runtime::{CheckpointManager, CheckpointSnapshot, ExecutionMode, WaveSchedule};
@@ -23,6 +24,7 @@ pub struct MigrationRunReport {
     pub waves_executed: usize,
     pub repairs_triggered: u32,
     pub checkpoint_saved: bool,
+    pub eval_metrics: MigrationEvalMetrics,
 }
 
 impl MigrationRunReport {
@@ -101,6 +103,9 @@ impl MigrationOrchestrator {
         source_path: &str,
         target_dir: &str,
     ) -> Result<MigrationRunReport, DomainError> {
+        let wall_clock_start = Instant::now();
+        let mut eval_metrics = MigrationEvalMetrics::new();
+
         // 1. Validate OKF curated repository bundle
         let okf_valid = self.knowledge_repo.validate_bundle()?;
         if !okf_valid {
@@ -122,9 +127,12 @@ impl MigrationOrchestrator {
         }
 
         // 2. Discover source inventory, extract UI semantics, assess capabilities
+        let discovery_start = Instant::now();
         let source_inventory_artifact = self.source_adapter.discover(source_path)?;
         self.artifact_repo.store(source_inventory_artifact)?;
+        eval_metrics.discovery_duration_us = discovery_start.elapsed().as_micros() as u64;
 
+        let semantics_start = Instant::now();
         let semantic_model = self.source_adapter.extract_semantics(source_path)?;
         if aggregate.capability_report.assessments.is_empty()
             && aggregate.capability_report.gaps.is_empty()
@@ -132,6 +140,7 @@ impl MigrationOrchestrator {
             let capability_report = self.source_adapter.assess_capabilities(&semantic_model)?;
             aggregate.set_capability_report(capability_report);
         }
+        eval_metrics.semantics_duration_us = semantics_start.elapsed().as_micros() as u64;
 
         // 3. Compute and lock canonical reviewed PlanHash
         if aggregate.plan_hash.is_none() {
@@ -153,9 +162,11 @@ impl MigrationOrchestrator {
         }
 
         // 4. Scaffold native target project
+        let scaffold_start = Instant::now();
         let _scaffold_summary = self
             .target_adapter
             .scaffold_target(&semantic_model, target_dir)?;
+        eval_metrics.scaffold_duration_us = scaffold_start.elapsed().as_micros() as u64;
 
         // 5. Execute tasks in topological wave order
         let tasks: Vec<MigrationTask> = aggregate.tasks.values().cloned().collect();
@@ -178,6 +189,7 @@ impl MigrationOrchestrator {
 
                 // Execution & repair loop
                 loop {
+                    let exec_step_start = Instant::now();
                     // Pending / NeedsRepair -> Ready
                     aggregate.mark_task_ready(task_id)?;
                     // Ready -> Running
@@ -198,9 +210,11 @@ impl MigrationOrchestrator {
                     )?;
 
                     let combined_prompt = format!("{}\n\n{}", code_prompt, style_prompt);
-                    let _agent_result = self
+                    let agent_result = self
                         .agent_backend
                         .execute_prompt(&combined_prompt, &code_prov)?;
+                    eval_metrics
+                        .record_agent_invocation(&combined_prompt, &agent_result.log_summary);
 
                     // Emit target code and advance target revision
                     let current_task = aggregate.get_task(task_id).unwrap().clone();
@@ -210,8 +224,11 @@ impl MigrationOrchestrator {
                         target_dir,
                     )?;
                     let current_target_rev = aggregate.advance_target_revision();
+                    eval_metrics.execution_duration_us +=
+                        exec_step_start.elapsed().as_micros() as u64;
 
                     // Transition Running -> Verifying
+                    let verify_step_start = Instant::now();
                     aggregate.start_task_verifying(task_id)?;
 
                     // Run all verifiers for task's required contracts + global Build and NativeCompliance
@@ -237,6 +254,8 @@ impl MigrationOrchestrator {
                             }
                         }
                     }
+                    eval_metrics.verification_duration_us +=
+                        verify_step_start.elapsed().as_micros() as u64;
 
                     // Attempt to accept task via pure AcceptancePolicy
                     match aggregate.accept_task(task_id) {
@@ -293,9 +312,13 @@ impl MigrationOrchestrator {
                                             "migration.failure-resolver",
                                             &[("context_path", &context_path)],
                                         )?;
-                                    let _ = self
+                                    let fail_res = self
                                         .agent_backend
                                         .execute_prompt(&fail_prompt, &fail_prov)?;
+                                    eval_metrics.record_agent_invocation(
+                                        &fail_prompt,
+                                        &fail_res.log_summary,
+                                    );
                                     // Retry loop continues to attempt repair
                                 }
                                 RecoveryDecision::Block => {
@@ -333,6 +356,7 @@ impl MigrationOrchestrator {
             .values()
             .map(|t| (t.id.clone(), t.state))
             .collect();
+        eval_metrics.total_wall_clock_duration_us = wall_clock_start.elapsed().as_micros() as u64;
 
         Ok(MigrationRunReport {
             migration_id: aggregate.id.clone(),
@@ -345,6 +369,7 @@ impl MigrationOrchestrator {
             waves_executed,
             repairs_triggered,
             checkpoint_saved,
+            eval_metrics,
         })
     }
 }
