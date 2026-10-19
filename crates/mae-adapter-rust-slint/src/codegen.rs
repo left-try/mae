@@ -518,9 +518,18 @@ pub fn fetch_backend_state() -> Result<String, String> {
 }
 
 pub fn post_create_task(title: &str) -> Result<String, String> {
+    post_create_task_with_priority(title, "high")
+}
+
+pub fn post_create_task_with_priority(title: &str, priority: &str) -> Result<String, String> {
     let escaped = title.replace('"', "'");
-    let payload = format!("{{\"title\":\"{escaped}\"}}");
+    let prio = priority.replace('"', "'");
+    let payload = format!("{{\"action\":\"create\",\"title\":\"{escaped}\",\"priority\":\"{prio}\"}}");
     send_http_json("POST", "/api/tasks", Some(&payload))
+}
+
+pub fn post_complete_all_tasks() -> Result<String, String> {
+    send_http_json("POST", "/api/tasks", Some("{\"action\":\"complete_all\"}"))
 }
 
 pub fn post_move_kanban_card(card_id: &str, column: &str) -> Result<String, String> {
@@ -536,6 +545,18 @@ pub fn post_update_settings(wip_limit: u32, compact_mode: bool, notifications_mu
     let payload = format!(
         "{{\"wip_limit\":{wip_limit},\"compact_mode\":{compact_mode},\"notifications_muted\":{notifications_muted}}}"
     );
+    send_http_json("POST", "/api/settings", Some(&payload))
+}
+
+pub fn post_update_time_range(time_range: &str) -> Result<String, String> {
+    let escaped = time_range.replace('"', "'");
+    let payload = format!("{{\"time_range\":\"{escaped}\"}}");
+    send_http_json("POST", "/api/settings", Some(&payload))
+}
+
+pub fn post_update_theme_mode(theme_mode: &str) -> Result<String, String> {
+    let escaped = theme_mode.replace('"', "'");
+    let payload = format!("{{\"theme_mode\":\"{escaped}\"}}");
     send_http_json("POST", "/api/settings", Some(&payload))
 }
 "#;
@@ -807,6 +828,10 @@ fn generate_theme_tokens_slint(model: &SemanticUiModel) -> String {
         })
         .unwrap_or(1.0);
 
+    let responsive_wrap = first_layout
+        .map(|l| !l.responsive_rules.is_empty() || l.direction == "grid" || l.direction == "row")
+        .unwrap_or(true);
+
     let mut token_props = String::new();
     for token in &model.style_tokens {
         let name = sanitize_identifier(&token.name).replace('_', "-");
@@ -823,6 +848,8 @@ fn generate_theme_tokens_slint(model: &SemanticUiModel) -> String {
     out property <length> border-radius: {border_radius}px;
     out property <length> font-size: {font_size}px;
     out property <float> scale-factor: {scale_factor:.2};
+    out property <bool> responsive-wrap: {responsive_wrap};
+    out property <length> max-content-width: 1240px;
 {token_props}}}
 "#
     )
@@ -851,8 +878,16 @@ fn generate_component_slint(comp: &ComponentNode) -> String {
                 } else {
                     "button"
                 };
+                let bg = if elem.variant.as_deref() == Some("primary")
+                    || elem.kind == UiElementKind::TabButton
+                {
+                    "#2563eb"
+                } else {
+                    "#334155"
+                };
                 format!(
                     r#"        Rectangle {{
+            background: {bg};
             border-radius: ThemeTokens.border-radius;
             Text {{
                 text: "{safe_label}";
@@ -869,6 +904,7 @@ fn generate_component_slint(comp: &ComponentNode) -> String {
             }
             UiElementKind::TextInput => format!(
                 r#"        Rectangle {{
+            background: #0f172a;
             border-radius: ThemeTokens.border-radius;
             TextInput {{
                 font-size: ThemeTokens.font-size;
@@ -884,6 +920,7 @@ fn generate_component_slint(comp: &ComponentNode) -> String {
             Rectangle {{
                 width: 16px;
                 height: 16px;
+                background: #2563eb;
                 border-radius: 4px;
             }}
             Text {{
@@ -897,6 +934,7 @@ fn generate_component_slint(comp: &ComponentNode) -> String {
             ),
             UiElementKind::SelectDropdown => format!(
                 r#"        Rectangle {{
+            background: #0f172a;
             border-radius: ThemeTokens.border-radius;
             Text {{
                 text: "{safe_label}";
@@ -910,6 +948,7 @@ fn generate_component_slint(comp: &ComponentNode) -> String {
             UiElementKind::Slider => format!(
                 r#"        Rectangle {{
             height: 8px;
+            background: #334155;
             border-radius: 4px;
             Text {{
                 text: "{safe_label}";
@@ -923,6 +962,7 @@ fn generate_component_slint(comp: &ComponentNode) -> String {
             UiElementKind::ProgressBar => format!(
                 r#"        Rectangle {{
             height: 10px;
+            background: #2563eb;
             border-radius: ThemeTokens.border-radius;
             Text {{
                 text: "{safe_label}";
@@ -933,7 +973,20 @@ fn generate_component_slint(comp: &ComponentNode) -> String {
         }}
 "#
             ),
-            UiElementKind::Badge | UiElementKind::Dialog | UiElementKind::Heading => format!(
+            UiElementKind::Badge => format!(
+                r#"        Rectangle {{
+            background: #1d4ed8;
+            border-radius: ThemeTokens.border-radius;
+            Text {{
+                text: "{safe_label}";
+                font-size: ThemeTokens.font-size;
+                accessible-role: text;
+                accessible-label: "{aria}";
+            }}
+        }}
+"#
+            ),
+            UiElementKind::Dialog | UiElementKind::Heading => format!(
                 r#"        Text {{
             text: "{safe_label}";
             font-size: ThemeTokens.font-size;
