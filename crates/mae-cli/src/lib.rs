@@ -490,44 +490,8 @@ pub fn execute_cli_args(args: &[String]) -> Result<String, DomainError> {
                 outcome.run_report.total_evidence_count
             ))
         }
-        "package-deb" => {
-            let target_dir = PathBuf::from(
-                pos.get(2)
-                    .map(String::as_str)
-                    .unwrap_or("target/migrated-ubuntu-app"),
-            );
-            let build_script = target_dir.join("packaging/build-deb.sh");
-            if !build_script.exists() {
-                return Err(DomainError::PortError(format!(
-                    "Missing Ubuntu build-deb.sh at {}",
-                    build_script.display()
-                )));
-            }
-            let out_deb = pos
-                .get(3)
-                .map(PathBuf::from)
-                .unwrap_or_else(|| target_dir.join("desktop-productivity-hub_0.1.0_amd64.deb"));
-            let output = std::process::Command::new("bash")
-                .arg(&build_script)
-                .arg(&out_deb)
-                .output()
-                .map_err(|e| {
-                    DomainError::PortError(format!("Failed to invoke build-deb.sh: {e}"))
-                })?;
-            if !output.status.success() {
-                return Err(DomainError::PortError(format!(
-                    "dpkg-deb failed: {}",
-                    String::from_utf8_lossy(&output.stderr)
-                )));
-            }
-            Ok(format!(
-                "MAE Package-Deb Complete: deb_path={}, exists={}",
-                out_deb.display(),
-                out_deb.exists()
-            ))
-        }
         _ => Ok(
-            "MAE v0.1 CLI — Commands: analyze [--platform windows|ubuntu|cross-platform] <src> | plan [--platform ...] <src> | migrate [--platform ...] <root> <src> <out> | verify [--platform ...] <out> | run-e2e [--platform ...] <root> <src> <out> | package-deb <out> [deb_file]"
+            "MAE v0.1 CLI — Commands: analyze [--platform windows|ubuntu|cross-platform] <src> | plan [--platform ...] <src> | migrate [--platform ...] <root> <src> <out> | verify [--platform ...] <out> | run-e2e [--platform ...] <root> <src> <out>"
                 .to_string(),
         ),
     }
