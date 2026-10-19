@@ -1,0 +1,12 @@
+[package]
+name = "mae-verification"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+mae-domain = { path = "../mae-domain" }
+
+[dev-dependencies]
+mae-adapter-rust-slint = { path = "../mae-adapter-rust-slint" }

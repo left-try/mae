@@ -1,0 +1,9 @@
+[package]
+name = "mae-adapter-rust-slint"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+mae-domain = { path = "../mae-domain" }
