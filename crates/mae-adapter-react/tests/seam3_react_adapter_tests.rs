@@ -522,8 +522,44 @@ fn test_extract_css_tokens_and_layout_constraints() {
     assert_eq!(layout.direction, "column");
     assert_eq!(layout.spacing_px, 16.0);
     assert_eq!(layout.padding_px, 24.0);
+    assert_eq!(layout.border_radius_px, 4.0);
     assert_eq!(layout.responsive_rules.len(), 1);
     assert!(layout.responsive_rules[0].contains("@media (max-width: 768px)"));
+}
+
+#[test]
+fn test_extract_css_roundness_font_size_and_scale_factor() {
+    let td = TestDir::new("css_roundness_scale");
+    td.write_file(
+        "src/theme.css",
+        r#":root {
+               --color-primary: #2563eb;
+               --radius-md: 8px;
+               --font-size-base: 14px;
+               --scale-factor: 1.25;
+           }
+           .app-shell {
+               display: flex;
+               flex-direction: column;
+               gap: 12px;
+               padding: 16px;
+               border-radius: 8px;
+               font-size: 14px;
+               zoom: 1.25;
+           }"#,
+    );
+
+    let adapter = ReactSourceAdapter::default_windows();
+    let model = adapter
+        .extract_semantics(td.as_str())
+        .expect("Semantic extraction failed");
+
+    let layout = model.layout_constraints.first().unwrap();
+    assert_eq!(layout.spacing_px, 12.0);
+    assert_eq!(layout.padding_px, 16.0);
+    assert_eq!(layout.border_radius_px, 8.0);
+    assert_eq!(layout.font_size_px, 14.0);
+    assert!((layout.scale_factor - 1.25).abs() < 1e-6);
 }
 
 // ---------------------------------------------------------------------------

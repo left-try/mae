@@ -281,16 +281,8 @@ pub fn build_mvp_verifiers_for_platform(
         16.0,
         "#2563eb",
         0.0,
-    );
-    let target_visual = VisualSnapshot::new(
-        "desktop.main_1280x800",
-        1280,
-        800,
-        12.0,
-        16.0,
-        "#2563eb",
-        0.008,
-    );
+    )
+    .with_roundness_and_scale(8.0, 14.0, 1.0);
 
     vec![
         Box::new(NativeComplianceVerifier::for_platform(target_dir, platform)),
@@ -300,7 +292,11 @@ pub fn build_mvp_verifiers_for_platform(
             traces.clone(),
             traces,
         )),
-        Box::new(VisualParityVerifier::new(baseline_visual, target_visual)),
+        Box::new(VisualParityVerifier::for_target_dir(
+            baseline_visual,
+            target_dir,
+            0.008,
+        )),
     ]
 }
 

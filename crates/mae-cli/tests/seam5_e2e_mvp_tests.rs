@@ -124,6 +124,15 @@ fn mvp_criterion_3_4_5_6_full_pipeline_generates_compilable_windows_rust_slint_t
         main_rs.contains("#![cfg_attr(target_os = \"windows\", windows_subsystem = \"windows\")]")
     );
 
+    let tokens_slint = fs::read_to_string(target_dir.join("ui/theme/tokens.slint")).unwrap();
+    assert!(tokens_slint.contains("out property <length> border-radius: 8px;"));
+    assert!(tokens_slint.contains("out property <length> font-size: 14px;"));
+    assert!(tokens_slint.contains("out property <float> scale-factor: 1.00;"));
+
+    let app_slint = fs::read_to_string(target_dir.join("ui/app.slint")).unwrap();
+    assert!(app_slint.contains("default-font-size: ThemeTokens.font-size;"));
+    assert!(app_slint.contains("border-radius: ThemeTokens.border-radius;"));
+
     // Criterion 5: All recorded evidence records have complete scenario coverage disclosure
     assert!(!outcome.aggregate.evidence_ledger.is_empty());
     for ev in &outcome.aggregate.evidence_ledger {
