@@ -298,11 +298,13 @@ fn mvp_ubuntu_desktop_full_e2e_pipeline_and_cli_flag() {
     assert!(e2e_out.contains("platform=UBUNTU_DESKTOP"));
     assert!(e2e_out.contains("success=true, health_score=1.00"));
 
-    // Verify generated Ubuntu XDG .desktop entry and Ubuntu dependency script exist
+    // Verify generated Ubuntu XDG .desktop entry, .deb packaging script, and Ubuntu GUI runner exist
     assert!(target_dir
         .join("packaging/desktop-productivity-hub.desktop")
         .exists());
     assert!(target_dir.join("packaging/ubuntu-deps.sh").exists());
+    assert!(target_dir.join("packaging/build-deb.sh").exists());
+    assert!(target_dir.join("packaging/slint-gtk-runner.py").exists());
 
     // Run `mae verify --platform ubuntu`
     let verify_out = execute_cli_args(&[

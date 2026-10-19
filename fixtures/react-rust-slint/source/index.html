@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Desktop Productivity Hub — Source React App (Web Emulator)</title>
+  <link rel="stylesheet" href="src/styles/theme.css" />
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, -apple-system, sans-serif; }
+    body { background: var(--color-surface, #0f172a); color: var(--color-text, #f8fafc); min-height: 100vh; display: flex; flex-direction: column; }
+    header { background: #1e293b; padding: 12px 16px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #334155; }
+    header h1 { font-size: 18px; font-weight: 700; display: flex; align-items: center; gap: 10px; }
+    .nav-btns { display: flex; gap: 8px; }
+    button { background: var(--color-primary, #2563eb); color: #fff; border: none; border-radius: 4px; padding: 8px 14px; font-size: 13px; font-weight: 600; cursor: pointer; }
+    button:hover { background: #1d4ed8; }
+    button.modal-btn { background: #059669; }
+    .controls { padding: 14px 16px; display: flex; gap: 18px; align-items: center; flex-wrap: wrap; border-bottom: 1px solid #1e293b; }
+    .controls label { color: #94a3b8; font-size: 13px; margin-right: 6px; }
+    input { background: #1e293b; color: #f8fafc; border: 1px solid #334155; border-radius: 4px; padding: 7px 10px; font-size: 13px; }
+    main { flex: 1; padding: 16px; max-width: 1280px; width: 100%; margin: 0 auto; }
+    .route-banner { color: #60a5fa; font-weight: 700; font-size: 15px; margin-bottom: 12px; }
+    .task-card { background: #1e293b; padding: 12px 16px; border-radius: 6px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; }
+    .badge { color: #34d399; font-family: monospace; font-size: 12px; font-weight: 700; }
+    .settings-box { background: #1e293b; padding: 16px; border-radius: 6px; line-height: 1.6; }
+    footer { background: #1e293b; padding: 8px 16px; font-family: monospace; font-size: 12px; color: #38bdf8; }
+    dialog { background: #1e293b; color: #f8fafc; border: 1px solid #3b82f6; border-radius: 8px; padding: 20px; margin: auto; max-width: 440px; }
+    dialog::backdrop { background: rgba(0, 0, 0, 0.65); }
+  </style>
+</head>
+<body>
+  <header aria-label="Primary Navigation">
+    <h1>
+      <img src="assets/app-icon.svg" width="24" height="24" alt="App Icon" />
+      Desktop Productivity Hub (Source React Web App)
+    </h1>
+    <div class="nav-btns">
+      <button aria-label="Navigate Dashboard" onclick="setRoute('/')">Dashboard (/)</button>
+      <button aria-label="Navigate Tasks" onclick="setRoute('/tasks')">Tasks (/tasks)</button>
+      <button aria-label="Navigate Settings" onclick="setRoute('/settings')">Settings (/settings)</button>
+      <button class="modal-btn" aria-label="Open Status Modal" onclick="openModal()">Status Modal</button>
+    </div>
+  </header>
+
+  <section class="controls" aria-label="Task Controls">
+    <div>
+      <label for="filterInput">Search / Filter:</label>
+      <input id="filterInput" aria-label="Search Tasks Input" placeholder="Filter tasks..." oninput="render()" />
+    </div>
+    <form aria-label="New Task Form" onsubmit="addTask(event)" style="display:flex;align-items:center;gap:8px;">
+      <label for="taskInput">New Task:</label>
+      <input id="taskInput" aria-label="Task Title Input" placeholder="Enter desktop task..." />
+      <button type="submit" aria-label="Add Task Button">Add Task</button>
+    </form>
+  </section>
+
+  <main id="viewContainer"></main>
+
+  <dialog id="statusDialog" aria-label="Status Dialog">
+    <h3 style="margin-bottom:10px;color:#60a5fa;">React Source Application Status</h3>
+    <p style="margin-bottom:14px;font-size:14px;line-height:1.5;">
+      Running in Web Emulator.<br/>
+      • Routes: <code>/</code>, <code>/tasks</code>, <code>/settings</code><br/>
+      • Browser API used: <code>window.localStorage.getItem('mae-desktop-theme')</code>
+    </p>
+    <button aria-label="Close Modal" onclick="closeModal()">Close</button>
+  </dialog>
+
+  <footer id="footerBar"></footer>
+
+  <script>
+    if (!window.localStorage.getItem('mae-desktop-theme')) {
+      window.localStorage.setItem('mae-desktop-theme', 'dark-slate (Browser window.localStorage)');
+    }
+    const state = {
+      activeRoute: '/',
+      tasks: [
+        'Verify native Slint UI compliance',
+        'Preserve behavioral migration contracts',
+        'Build & install Ubuntu .deb package'
+      ]
+    };
+
+    function setRoute(r) {
+      state.activeRoute = r;
+      render();
+    }
+
+    function addTask(e) {
+      e.preventDefault();
+      const input = document.getElementById('taskInput');
+      const v = input.value.trim();
+      if (v) {
+        state.tasks.push(v);
+        input.value = '';
+        render();
+      }
+    }
+
+    function openModal() {
+      document.getElementById('statusDialog').showModal();
+    }
+
+    function closeModal() {
+      document.getElementById('statusDialog').close();
+    }
+
+    function render() {
+      const q = document.getElementById('filterInput').value.trim().toLowerCase();
+      const visible = state.tasks.filter(t => !q || t.toLowerCase().includes(q));
+      const container = document.getElementById('viewContainer');
+
+      let html = `<div class="route-banner">Active Route: ${state.activeRoute} &nbsp;|&nbsp; Visible Tasks: ${visible.length}/${state.tasks.length}</div>`;
+      if (state.activeRoute === '/' || state.activeRoute === '/tasks') {
+        visible.forEach((t, idx) => {
+          html += `<div class="task-card"><span>#${idx + 1} &nbsp; ${t}</span><span class="badge">ACTIVE</span></div>`;
+        });
+      } else if (state.activeRoute === '/settings') {
+        const theme = window.localStorage.getItem('mae-desktop-theme');
+        html += `<div class="settings-box">
+          <div style="color:#fbbf24;font-weight:700;">Browser API Source Feature (window.localStorage):</div>
+          <div><code>window.localStorage.getItem('mae-desktop-theme')</code></div>
+          <div style="color:#38bdf8;font-family:monospace;margin-top:6px;">Current Value: ${theme}</div>
+        </div>`;
+      }
+      container.innerHTML = html;
+      document.getElementById('footerBar').textContent =
+        `Source: React 18 + TypeScript (Web Emulator) | Route: ${state.activeRoute} | Filter: '${q}'`;
+    }
+
+    render();
+  </script>
+</body>
+</html>
