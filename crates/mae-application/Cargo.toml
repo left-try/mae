@@ -1,0 +1,11 @@
+[package]
+name = "mae-application"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Application and Integration Layer for MAE (Migrate Absolutely Everything)"
+
+[dependencies]
+# Pure Clean Architecture Integration Layer: ZERO external dependencies (std only)
+mae-domain = { path = "../mae-domain" }
