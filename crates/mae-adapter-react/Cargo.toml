@@ -1,0 +1,11 @@
+[package]
+name = "mae-adapter-react"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "React Frontend Source Adapter for MAE (Migrate Absolutely Everything)"
+
+[dependencies]
+# Pure Clean Architecture Adapter: ZERO external dependencies (std only)
+mae-domain = { path = "../mae-domain" }

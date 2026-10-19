@@ -3,6 +3,13 @@
 version = 4
 
 [[package]]
+name = "mae-adapter-react"
+version = "0.1.0"
+dependencies = [
+ "mae-domain",
+]
+
+[[package]]
 name = "mae-application"
 version = "0.1.0"
 dependencies = [
