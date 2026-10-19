@@ -1,0 +1,11 @@
+[workspace]
+members = [
+    "crates/mae-domain",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["MAE Team"]
+license = "MIT"
