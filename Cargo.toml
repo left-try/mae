@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/mae-domain",
+    "crates/mae-application",
 ]
 resolver = "2"
 
