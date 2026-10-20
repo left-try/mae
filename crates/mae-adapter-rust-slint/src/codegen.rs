@@ -596,6 +596,10 @@ pub struct AppState {{
     pub notifications_muted: bool,
     pub compact_mode: bool,
     pub time_range: String,
+    pub theme_mode: String,
+    pub task_priority: String,
+    pub sort_order: String,
+    pub responsive_columns: u32,
     pub card_columns: BTreeMap<String, String>,
     pub custom_fields: BTreeMap<String, String>,
 {struct_fields}}}
@@ -614,6 +618,10 @@ impl Default for AppState {{
             notifications_muted: false,
             compact_mode: false,
             time_range: "30d".to_string(),
+            theme_mode: "dark-slate".to_string(),
+            task_priority: "high".to_string(),
+            sort_order: "priority".to_string(),
+            responsive_columns: 3,
             card_columns: BTreeMap::new(),
             custom_fields: BTreeMap::new(),
 {default_inits}        }}
@@ -628,6 +636,16 @@ impl AppState {{
             .map(String::as_str)
             .filter(|item| q.is_empty() || item.to_lowercase().contains(&q))
             .collect()
+    }}
+
+    pub fn compute_responsive_columns(viewport_width: u32) -> u32 {{
+        if viewport_width < 640 {{
+            1
+        }} else if viewport_width < 1024 {{
+            2
+        }} else {{
+            3
+        }}
     }}
 }}
 "#
@@ -657,6 +675,10 @@ pub enum AppEvent {{
     SetNotificationsMuted(bool),
     SetCompactMode(bool),
     SetTimeRange(String),
+    SetThemeMode(String),
+    SetTaskPriority(String),
+    SetSortOrder(String),
+    ResizeViewport {{ width: u32, height: u32 }},
     SetField {{ key: String, value: String }},
     AsyncLoadStarted,
     AsyncLoadSucceeded(Vec<String>),
@@ -709,6 +731,18 @@ pub fn reduce(state: &mut AppState, event: AppEvent) {
         }
         AppEvent::SetTimeRange(range) => {
             state.time_range = range;
+        }
+        AppEvent::SetThemeMode(theme) => {
+            state.theme_mode = theme;
+        }
+        AppEvent::SetTaskPriority(prio) => {
+            state.task_priority = prio;
+        }
+        AppEvent::SetSortOrder(order) => {
+            state.sort_order = order;
+        }
+        AppEvent::ResizeViewport { width, .. } => {
+            state.responsive_columns = AppState::compute_responsive_columns(width);
         }
         AppEvent::SetField { key, value } => {
             state.custom_fields.insert(key, value);
@@ -828,8 +862,15 @@ fn generate_theme_tokens_slint(model: &SemanticUiModel) -> String {
         })
         .unwrap_or(1.0);
 
+    let max_width = first_layout.and_then(|l| l.max_width_px).unwrap_or(1240.0) as u32;
+
     let responsive_wrap = first_layout
-        .map(|l| !l.responsive_rules.is_empty() || l.direction == "grid" || l.direction == "row")
+        .map(|l| {
+            l.flex_wrap
+                || !l.responsive_rules.is_empty()
+                || l.direction == "grid"
+                || l.direction == "row"
+        })
         .unwrap_or(true);
 
     let mut token_props = String::new();
@@ -849,7 +890,7 @@ fn generate_theme_tokens_slint(model: &SemanticUiModel) -> String {
     out property <length> font-size: {font_size}px;
     out property <float> scale-factor: {scale_factor:.2};
     out property <bool> responsive-wrap: {responsive_wrap};
-    out property <length> max-content-width: 1240px;
+    out property <length> max-content-width: {max_width}px;
 {token_props}}}
 "#
     )
@@ -878,13 +919,28 @@ fn generate_component_slint(comp: &ComponentNode) -> String {
                 } else {
                     "button"
                 };
-                let bg = if elem.variant.as_deref() == Some("primary")
+                let is_complete_all = elem.variant.as_deref() == Some("complete-all");
+                let bg = if is_complete_all {
+                    "#4f46e5"
+                } else if elem.variant.as_deref() == Some("primary")
+                    || elem.variant.as_deref() == Some("theme-selector")
                     || elem.kind == UiElementKind::TabButton
                 {
                     "#2563eb"
                 } else {
                     "#334155"
                 };
+
+                let click_action = if is_complete_all {
+                    format!(
+                        "root.action-triggered(\"{safe_label}\"); root.complete-all-triggered();"
+                    )
+                } else if elem.kind == UiElementKind::TabButton {
+                    format!("root.action-triggered(\"{safe_label}\"); root.tab-selected(\"{safe_label}\");")
+                } else {
+                    format!("root.action-triggered(\"{safe_label}\");")
+                };
+
                 format!(
                     r#"        Rectangle {{
             background: {bg};
@@ -896,7 +952,7 @@ fn generate_component_slint(comp: &ComponentNode) -> String {
                 accessible-label: "{aria}";
             }}
             TouchArea {{
-                clicked => {{ root.action-triggered("{safe_label}"); }}
+                clicked => {{ {click_action} }}
             }}
         }}
 "#
@@ -917,6 +973,7 @@ fn generate_component_slint(comp: &ComponentNode) -> String {
             UiElementKind::Checkbox => format!(
                 r#"        HorizontalLayout {{
             spacing: ThemeTokens.spacing;
+            alignment: start;
             Rectangle {{
                 width: 16px;
                 height: 16px;
@@ -929,11 +986,51 @@ fn generate_component_slint(comp: &ComponentNode) -> String {
                 accessible-role: checkbox;
                 accessible-label: "{aria}";
             }}
+            TouchArea {{
+                clicked => {{ root.action-triggered("{safe_label}"); }}
+            }}
         }}
 "#
             ),
-            UiElementKind::SelectDropdown => format!(
-                r#"        Rectangle {{
+            UiElementKind::SelectDropdown => {
+                if !elem.options.is_empty() {
+                    let mut opt_rects = String::new();
+                    for opt in &elem.options {
+                        let safe_opt = opt.replace('"', "\\\"");
+                        opt_rects.push_str(&format!(
+                            r#"                Rectangle {{
+                    background: #334155;
+                    border-radius: ThemeTokens.border-radius;
+                    Text {{
+                        text: "{safe_opt}";
+                        font-size: ThemeTokens.font-size;
+                    }}
+                    TouchArea {{
+                        clicked => {{ root.action-triggered("{safe_label}:{safe_opt}"); }}
+                    }}
+                }}
+"#
+                        ));
+                    }
+                    format!(
+                        r#"        VerticalLayout {{
+            spacing: 4px;
+            Text {{
+                text: "{safe_label}:";
+                font-size: ThemeTokens.font-size;
+                accessible-role: combobox;
+                accessible-label: "{aria}";
+            }}
+            HorizontalLayout {{
+                spacing: ThemeTokens.spacing;
+                alignment: start;
+{opt_rects}            }}
+        }}
+"#
+                    )
+                } else {
+                    format!(
+                        r#"        Rectangle {{
             background: #0f172a;
             border-radius: ThemeTokens.border-radius;
             Text {{
@@ -944,7 +1041,9 @@ fn generate_component_slint(comp: &ComponentNode) -> String {
             }}
         }}
 "#
-            ),
+                    )
+                }
+            }
             UiElementKind::Slider => format!(
                 r#"        Rectangle {{
             height: 8px;
@@ -1004,6 +1103,8 @@ fn generate_component_slint(comp: &ComponentNode) -> String {
 
 export component {comp_name} inherits Rectangle {{
 {props}    callback action-triggered(string);
+    callback complete-all-triggered();
+    callback tab-selected(string);
     border-radius: ThemeTokens.border-radius;
 
     VerticalLayout {{
@@ -1057,6 +1158,8 @@ fn generate_app_slint(config: &RustSlintAdapterConfig, model: &SemanticUiModel) 
         r#"{imports}
 export component MainWindow inherits Window {{
     title: "{title}";
+    min-width: 640px;
+    min-height: 480px;
     preferred-width: {width}px;
     preferred-height: {height}px;
     default-font-size: ThemeTokens.font-size;
@@ -1064,10 +1167,20 @@ export component MainWindow inherits Window {{
     in-out property <string> current-route: "/";
     in-out property <string> filter-query: "";
     in-out property <bool> loading: false;
+    in-out property <bool> responsive-wrap: ThemeTokens.responsive-wrap;
+    in-out property <int> responsive-columns: 3;
+    in-out property <string> theme-mode: "dark-slate";
+    in-out property <string> time-range: "30d";
+    in-out property <string> task-priority: "high";
 {state_props}
     callback navigate(string);
     callback submit-item(string);
     callback set-filter(string);
+    callback complete-all-items();
+    callback set-time-range(string);
+    callback set-theme-mode(string);
+    callback set-task-priority(string);
+    callback resize-viewport(int, int);
 {callbacks}
     Rectangle {{
         border-radius: ThemeTokens.border-radius;
@@ -1146,6 +1259,18 @@ fn test_generated_slint_app_state_and_reducer_parity() {{
 
     reduce(&mut state, AppEvent::SetTimeRange("90d".to_string()));
     assert_eq!(state.time_range, "90d");
+
+    reduce(&mut state, AppEvent::SetThemeMode("light-nord".to_string()));
+    assert_eq!(state.theme_mode, "light-nord");
+
+    reduce(&mut state, AppEvent::SetTaskPriority("critical".to_string()));
+    assert_eq!(state.task_priority, "critical");
+
+    reduce(&mut state, AppEvent::ResizeViewport {{ width: 800, height: 600 }});
+    assert_eq!(state.responsive_columns, 2);
+
+    reduce(&mut state, AppEvent::ResizeViewport {{ width: 480, height: 600 }});
+    assert_eq!(state.responsive_columns, 1);
 
     reduce(&mut state, AppEvent::CompleteAllItems);
     assert!(state.items.is_empty());

@@ -925,3 +925,97 @@ fn test_extract_api_endpoint_bindings() {
         "http://127.0.0.1:4010/api/tasks"
     );
 }
+
+#[test]
+fn test_extract_jsx_ui_elements_with_options_and_variants() {
+    let td = TestDir::new("ui_elements_options");
+    td.write_file(
+        "src/SettingsView.tsx",
+        r#"import React from 'react';
+           export function SettingsView() {
+               return (
+                   <div>
+                       <button role="tab" aria-label="Range 7 Days Tab" onClick={() => setTimeRange('7d')}>
+                           Last 7 Days
+                       </button>
+                       <select aria-label="Theme Mode Select" onChange={(e) => setThemeMode(e.target.value)}>
+                           <option value="dark-slate">Dark Slate</option>
+                           <option value="light-fluent">Light Fluent</option>
+                           <option value="high-contrast">High Contrast</option>
+                       </select>
+                       <button aria-label="Complete All Visible Button" onClick={() => setAllCompleted(true)}>
+                           Complete All Visible
+                       </button>
+                       <input type="checkbox" aria-label="Compact Mode Checkbox" checked={true} />
+                   </div>
+               );
+           }"#,
+    );
+
+    let adapter = ReactSourceAdapter::default_windows();
+    let model = adapter
+        .extract_semantics(td.as_str())
+        .expect("Extract semantics failed");
+
+    let comp = model
+        .components
+        .iter()
+        .find(|c| c.name == "SettingsView")
+        .expect("SettingsView component must exist");
+
+    assert_eq!(comp.elements.len(), 4);
+
+    // Tab button with inner text and variant
+    let tab = &comp.elements[0];
+    assert_eq!(tab.label, "Last 7 Days");
+    assert_eq!(tab.variant.as_deref(), Some("tab-selector"));
+
+    // Select with options
+    let select = &comp.elements[1];
+    assert_eq!(select.options.len(), 3);
+    assert!(select.options.contains(&"dark-slate".to_string()));
+    assert!(select.options.contains(&"light-fluent".to_string()));
+    assert!(select.options.contains(&"high-contrast".to_string()));
+    assert_eq!(select.variant.as_deref(), Some("theme-selector"));
+
+    // Complete all button
+    let complete_all = &comp.elements[2];
+    assert_eq!(complete_all.label, "Complete All Visible");
+    assert_eq!(complete_all.variant.as_deref(), Some("complete-all"));
+
+    // Checkbox
+    let checkbox = &comp.elements[3];
+    assert_eq!(checkbox.kind, mae_domain::UiElementKind::Checkbox);
+}
+
+#[test]
+fn test_extract_css_responsive_wrap_and_max_width() {
+    let td = TestDir::new("css_responsive");
+    td.write_file(
+        "src/theme.css",
+        r#".app-shell {
+               display: flex;
+               flex-direction: column;
+               flex-wrap: wrap;
+               max-width: 1280px;
+               gap: 12px;
+               padding: 16px;
+           }
+           @media (max-width: 768px) {
+               .app-shell { padding: 8px; }
+           }"#,
+    );
+
+    let adapter = ReactSourceAdapter::default_windows();
+    let model = adapter
+        .extract_semantics(td.as_str())
+        .expect("Extract semantics failed");
+
+    let layout = model
+        .layout_constraints
+        .first()
+        .expect("Layout constraint must exist");
+    assert!(layout.flex_wrap);
+    assert_eq!(layout.max_width_px, Some(1280.0));
+    assert!(!layout.responsive_rules.is_empty());
+}

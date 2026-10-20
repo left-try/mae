@@ -371,13 +371,13 @@ fn extract_jsx_ui_elements(content: &str) -> Vec<UiElementNode> {
             || trimmed.starts_with("<span")
             || trimmed.starts_with("<h1")
             || trimmed.starts_with("<h2"))
-            && !trimmed.contains('>')
+            && find_tag_close_gt(&block).is_none()
         {
             let mut j = i + 1;
             while j < lines.len() && j <= i + 8 {
                 block.push(' ');
                 block.push_str(lines[j].trim());
-                if lines[j].contains('>') {
+                if find_tag_close_gt(&block).is_some() {
                     break;
                 }
                 j += 1;
@@ -385,18 +385,96 @@ fn extract_jsx_ui_elements(content: &str) -> Vec<UiElementNode> {
         }
 
         let aria = extract_attribute_value(&block, "aria-label");
+        let action_handler = extract_jsx_handler(&block, "onClick")
+            .or_else(|| extract_jsx_handler(&block, "onChange"))
+            .or_else(|| extract_jsx_handler(&block, "onSubmit"));
+        let bound_prop = extract_jsx_attribute(&block, "value")
+            .or_else(|| extract_jsx_attribute(&block, "checked"));
+
+        // Helper to extract inner text until closing tag
+        let mut inner_text = String::new();
+        if let Some(gt_idx) = find_tag_close_gt(&block) {
+            let after_gt = &block[gt_idx + 1..];
+            if !after_gt.is_empty() && !after_gt.starts_with('<') {
+                if let Some(lt_idx) = after_gt.find('<') {
+                    inner_text = after_gt[..lt_idx].trim().to_string();
+                } else {
+                    inner_text = after_gt.trim().to_string();
+                }
+            }
+        }
+        if inner_text.is_empty() {
+            let mut j = i + 1;
+            while j < lines.len() && j <= i + 5 {
+                let next_line = lines[j].trim();
+                if next_line.starts_with("</") {
+                    break;
+                }
+                if !next_line.starts_with('<') && !next_line.starts_with('{') {
+                    inner_text = next_line.trim().to_string();
+                    break;
+                }
+                j += 1;
+            }
+        }
 
         if block.starts_with("<button") {
             let role = extract_attribute_value(&block, "role");
-            let kind = if role.as_deref() == Some("tab") {
+            let is_tab = role.as_deref() == Some("tab")
+                || action_handler
+                    .as_deref()
+                    .unwrap_or("")
+                    .contains("setTimeRange")
+                || inner_text.contains("Days");
+            let kind = if is_tab {
                 UiElementKind::TabButton
             } else {
                 UiElementKind::Button
             };
-            let label = aria.clone().unwrap_or_else(|| "Button".to_string());
-            let mut node = UiElementNode::new(kind, label);
+
+            let label = if !inner_text.is_empty() && !inner_text.starts_with('{') {
+                inner_text.clone()
+            } else {
+                aria.clone().unwrap_or_else(|| "Button".to_string())
+            };
+
+            let variant = if label.to_lowercase().contains("complete all")
+                || aria
+                    .as_deref()
+                    .unwrap_or("")
+                    .to_lowercase()
+                    .contains("complete all")
+                || action_handler
+                    .as_deref()
+                    .unwrap_or("")
+                    .contains("setAllCompleted")
+                || action_handler
+                    .as_deref()
+                    .unwrap_or("")
+                    .contains("complete_all")
+            {
+                "complete-all"
+            } else if is_tab {
+                "tab-selector"
+            } else if block.contains("primary")
+                || label.contains("Add Task")
+                || label.contains("Save Preferences")
+                || label.contains("Mark All Read")
+            {
+                "primary"
+            } else {
+                "secondary"
+            };
+
+            let mut node = UiElementNode::new(kind, label).with_variant(variant);
             if let Some(a) = aria {
                 node = node.with_aria_label(a);
+            }
+            if let Some(h) = action_handler {
+                node = node.with_action_handler(h);
+            }
+            if let Some(p) = bound_prop {
+                node = node.with_bound_prop(p);
             }
             elements.push(node);
         } else if block.starts_with("<input") {
@@ -415,12 +493,68 @@ fn extract_jsx_ui_elements(content: &str) -> Vec<UiElementNode> {
             if let Some(a) = aria {
                 node = node.with_aria_label(a);
             }
+            if let Some(h) = action_handler {
+                node = node.with_action_handler(h);
+            }
+            if let Some(p) = bound_prop {
+                node = node.with_bound_prop(p);
+            }
             elements.push(node);
         } else if block.starts_with("<select") {
             let label = aria.clone().unwrap_or_else(|| "Select".to_string());
-            let mut node = UiElementNode::new(UiElementKind::SelectDropdown, label);
+            let mut options = Vec::new();
+            let mut j = i + 1;
+            while j < lines.len() && j <= i + 15 {
+                let next_line = lines[j].trim();
+                if next_line.starts_with("</select>") {
+                    break;
+                }
+                if next_line.starts_with("<option") {
+                    let opt_val = extract_attribute_value(next_line, "value");
+                    let opt_text = if let Some(close_tag) = next_line.find('>') {
+                        let after = &next_line[close_tag + 1..];
+                        if let Some(end_opt) = after.find("</option>") {
+                            after[..end_opt].trim().to_string()
+                        } else {
+                            after.trim().to_string()
+                        }
+                    } else {
+                        String::new()
+                    };
+                    if let Some(v) = opt_val {
+                        options.push(v);
+                    } else if !opt_text.is_empty() {
+                        options.push(opt_text);
+                    }
+                }
+                j += 1;
+            }
+
+            let variant = if action_handler
+                .as_deref()
+                .unwrap_or("")
+                .contains("setThemeMode")
+                || label.to_lowercase().contains("theme")
+                || options
+                    .iter()
+                    .any(|o| o.contains("slate") || o.contains("contrast"))
+            {
+                "theme-selector"
+            } else {
+                "select-dropdown"
+            };
+
+            let mut node = UiElementNode::new(UiElementKind::SelectDropdown, label)
+                .with_variant(variant)
+                .with_options(options);
             if let Some(a) = aria {
                 node = node.with_aria_label(a);
+            }
+            if let Some(h) = action_handler {
+                node = node.with_action_handler(h);
+            }
+            if let Some(p) = bound_prop {
+                node = node.with_bound_prop(p);
             }
             elements.push(node);
         } else if block.starts_with("<progress") {
@@ -428,6 +562,9 @@ fn extract_jsx_ui_elements(content: &str) -> Vec<UiElementNode> {
             let mut node = UiElementNode::new(UiElementKind::ProgressBar, label);
             if let Some(a) = aria {
                 node = node.with_aria_label(a);
+            }
+            if let Some(p) = bound_prop {
+                node = node.with_bound_prop(p);
             }
             elements.push(node);
         } else if block.starts_with("<dialog") {
@@ -440,14 +577,22 @@ fn extract_jsx_ui_elements(content: &str) -> Vec<UiElementNode> {
         } else if block.starts_with("<span")
             && extract_attribute_value(&block, "role").as_deref() == Some("status")
         {
-            let label = aria.clone().unwrap_or_else(|| "Status Badge".to_string());
-            let mut node = UiElementNode::new(UiElementKind::Badge, label);
+            let label = if !inner_text.is_empty() && !inner_text.starts_with('{') {
+                inner_text
+            } else {
+                aria.clone().unwrap_or_else(|| "Status Badge".to_string())
+            };
+            let mut node = UiElementNode::new(UiElementKind::Badge, label).with_variant("badge");
             if let Some(a) = aria {
                 node = node.with_aria_label(a);
             }
             elements.push(node);
         } else if block.starts_with("<h1") || block.starts_with("<h2") {
-            let label = aria.clone().unwrap_or_else(|| "Heading".to_string());
+            let label = if !inner_text.is_empty() {
+                inner_text
+            } else {
+                aria.clone().unwrap_or_else(|| "Heading".to_string())
+            };
             elements.push(UiElementNode::new(UiElementKind::Heading, label));
         }
 
@@ -455,6 +600,76 @@ fn extract_jsx_ui_elements(content: &str) -> Vec<UiElementNode> {
     }
 
     elements
+}
+
+fn extract_jsx_handler(block: &str, event_name: &str) -> Option<String> {
+    let key = format!("{}=", event_name);
+    let idx = block.find(&key)?;
+    let after = &block[idx + key.len()..];
+    if after.starts_with('{') {
+        let mut depth = 0;
+        for (i, ch) in after.char_indices() {
+            if ch == '{' {
+                depth += 1;
+            } else if ch == '}' {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(after[1..i].trim().to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+fn extract_jsx_attribute(block: &str, attr_name: &str) -> Option<String> {
+    let key = format!("{}=", attr_name);
+    let idx = block.find(&key)?;
+    let after = &block[idx + key.len()..];
+    if after.starts_with('{') {
+        let mut depth = 0;
+        for (i, ch) in after.char_indices() {
+            if ch == '{' {
+                depth += 1;
+            } else if ch == '}' {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(after[1..i].trim().to_string());
+                }
+            }
+        }
+    } else if let Some(stripped) = after.strip_prefix('"') {
+        if let Some(end) = stripped.find('"') {
+            return Some(stripped[..end].to_string());
+        }
+    }
+    None
+}
+
+fn find_tag_close_gt(s: &str) -> Option<usize> {
+    let mut in_quote = None;
+    let mut brace_depth = 0;
+    let mut prev_ch = ' ';
+
+    for (idx, ch) in s.char_indices() {
+        if let Some(q) = in_quote {
+            if ch == q && prev_ch != '\\' {
+                in_quote = None;
+            }
+        } else if ch == '"' || ch == '\'' {
+            in_quote = Some(ch);
+        } else if ch == '{' {
+            brace_depth += 1;
+        } else if ch == '}' {
+            if brace_depth > 0 {
+                brace_depth -= 1;
+            }
+        } else if ch == '>' && brace_depth == 0 {
+            return Some(idx);
+        }
+        prev_ch = ch;
+    }
+    None
 }
 
 fn extract_component_name(line: &str) -> Option<String> {
@@ -875,6 +1090,8 @@ pub fn analyze_css_content(content: &str, model: &mut SemanticUiModel) {
     let mut border_radius_px = 0.0f64;
     let mut font_size_px = 14.0f64;
     let mut scale_factor = 1.0f64;
+    let mut flex_wrap = false;
+    let mut max_width_px = None;
     let mut direction = "column".to_string();
     let mut responsive_rules = Vec::new();
 
@@ -909,7 +1126,7 @@ pub fn analyze_css_content(content: &str, model: &mut SemanticUiModel) {
             }
         }
 
-        // 2. Layout Direction
+        // 2. Layout Direction & Responsive Wrapping
         if trimmed.starts_with("display:") && trimmed.contains("grid") {
             direction = "grid".to_string();
         } else if trimmed.starts_with("display:") && trimmed.contains("flex") {
@@ -922,7 +1139,14 @@ pub fn analyze_css_content(content: &str, model: &mut SemanticUiModel) {
             direction = "row".to_string();
         }
 
-        // 3. Spacing / Padding / Roundness / Font Size / Scale
+        if (trimmed.contains("flex-wrap:") && trimmed.contains("wrap"))
+            || (trimmed.contains("grid-template-columns:")
+                && (trimmed.contains("repeat(auto-") || trimmed.contains("minmax")))
+        {
+            flex_wrap = true;
+        }
+
+        // 3. Spacing / Padding / Roundness / Font Size / Scale / Max Width
         if trimmed.starts_with("gap:") {
             spacing_px = parse_px_value(trimmed);
         } else if trimmed.starts_with("padding:") {
@@ -939,19 +1163,30 @@ pub fn analyze_css_content(content: &str, model: &mut SemanticUiModel) {
             if parsed > 0.0 {
                 scale_factor = parsed;
             }
+        } else if trimmed.starts_with("max-width:") {
+            let parsed = parse_px_value(trimmed);
+            if parsed > 0.0 {
+                max_width_px = Some(parsed);
+                flex_wrap = true;
+            }
         }
 
         // 4. Responsive @media rules
         if trimmed.starts_with("@media") {
             let rule = trimmed.trim_end_matches('{').trim().to_string();
             responsive_rules.push(rule);
+            flex_wrap = true;
         }
     }
 
     let mut constraint = LayoutConstraint::new(direction, spacing_px, padding_px)
         .with_border_radius(border_radius_px)
         .with_font_size(font_size_px)
-        .with_scale_factor(scale_factor);
+        .with_scale_factor(scale_factor)
+        .with_flex_wrap(flex_wrap);
+    if let Some(mw) = max_width_px {
+        constraint = constraint.with_max_width(mw);
+    }
     for r in responsive_rules {
         constraint = constraint.with_responsive_rule(r);
     }

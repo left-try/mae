@@ -13,6 +13,8 @@
 .app-shell {
   display: flex;
   flex-direction: column;
+  flex-wrap: wrap;
+  max-width: 1280px;
   gap: 12px;
   padding: 16px;
   border-radius: 8px;
@@ -23,5 +25,6 @@
 @media (min-width: 1024px) {
   .app-shell {
     max-width: 1280px;
+    flex-wrap: wrap;
   }
 }

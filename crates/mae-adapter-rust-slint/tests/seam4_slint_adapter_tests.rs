@@ -294,3 +294,50 @@ fn scaffold_target_generates_pure_rust_api_client_for_shared_mock_backend() {
 
     let _ = fs::remove_dir_all(&target_dir);
 }
+
+#[test]
+fn test_scaffold_target_generates_responsive_controls_options_and_callbacks() {
+    let target_dir = unique_temp_dir("responsive_controls");
+    let mut model = sample_windows_semantic_model();
+
+    let mut comp =
+        mae_domain::ComponentNode::new("SettingsView", "SettingsView", "src/SettingsView.tsx");
+    comp.elements.push(
+        mae_domain::UiElementNode::new(mae_domain::UiElementKind::Button, "Complete All Visible")
+            .with_variant("complete-all"),
+    );
+    comp.elements.push(
+        mae_domain::UiElementNode::new(mae_domain::UiElementKind::SelectDropdown, "Theme Select")
+            .with_variant("theme-selector")
+            .with_options(vec!["dark-slate".into(), "light-fluent".into()]),
+    );
+    comp.elements.push(mae_domain::UiElementNode::new(
+        mae_domain::UiElementKind::Checkbox,
+        "Compact Mode",
+    ));
+    model.add_component(comp);
+
+    let adapter = RustSlintTargetAdapter::default();
+    adapter
+        .scaffold_target(&model, target_dir.to_str().unwrap())
+        .expect("scaffold target");
+
+    let app_slint = fs::read_to_string(target_dir.join("ui/app.slint")).expect("read app.slint");
+    assert!(app_slint.contains("min-width: 640px;"));
+    assert!(app_slint.contains("callback complete-all-items();"));
+    assert!(app_slint.contains("callback set-time-range(string);"));
+    assert!(app_slint.contains("callback set-theme-mode(string);"));
+    assert!(
+        app_slint.contains("in-out property <bool> responsive-wrap: ThemeTokens.responsive-wrap;")
+    );
+
+    let settings_slint = fs::read_to_string(target_dir.join("ui/components/settingsview.slint"))
+        .expect("read settingsview.slint");
+    assert!(settings_slint.contains("#4f46e5")); // complete-all button background
+    assert!(settings_slint.contains("root.complete-all-triggered();"));
+    assert!(settings_slint.contains("dark-slate"));
+    assert!(settings_slint.contains("light-fluent"));
+    assert!(settings_slint.contains("alignment: start;")); // start-aligned checkbox
+
+    let _ = fs::remove_dir_all(&target_dir);
+}
