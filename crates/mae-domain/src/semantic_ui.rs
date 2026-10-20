@@ -125,6 +125,9 @@ pub struct UiElementNode {
     pub label: String,
     pub aria_label: Option<String>,
     pub variant: Option<String>,
+    pub options: Vec<String>,
+    pub action_handler: Option<String>,
+    pub bound_prop: Option<String>,
 }
 
 impl UiElementNode {
@@ -134,6 +137,9 @@ impl UiElementNode {
             label: label.into(),
             aria_label: None,
             variant: None,
+            options: Vec::new(),
+            action_handler: None,
+            bound_prop: None,
         }
     }
 
@@ -144,6 +150,26 @@ impl UiElementNode {
 
     pub fn with_variant(mut self, variant: impl Into<String>) -> Self {
         self.variant = Some(variant.into());
+        self
+    }
+
+    pub fn with_option(mut self, option: impl Into<String>) -> Self {
+        self.options.push(option.into());
+        self
+    }
+
+    pub fn with_options(mut self, options: Vec<String>) -> Self {
+        self.options = options;
+        self
+    }
+
+    pub fn with_action_handler(mut self, handler: impl Into<String>) -> Self {
+        self.action_handler = Some(handler.into());
+        self
+    }
+
+    pub fn with_bound_prop(mut self, prop: impl Into<String>) -> Self {
+        self.bound_prop = Some(prop.into());
         self
     }
 }
@@ -302,6 +328,8 @@ pub struct LayoutConstraint {
     pub border_radius_px: f64,
     pub font_size_px: f64,
     pub scale_factor: f64,
+    pub flex_wrap: bool,
+    pub max_width_px: Option<f64>,
     pub responsive_rules: Vec<String>,
 }
 
@@ -314,6 +342,8 @@ impl LayoutConstraint {
             border_radius_px: 0.0,
             font_size_px: 14.0,
             scale_factor: 1.0,
+            flex_wrap: false,
+            max_width_px: None,
             responsive_rules: Vec::new(),
         }
     }
@@ -330,6 +360,16 @@ impl LayoutConstraint {
 
     pub fn with_scale_factor(mut self, scale_factor: f64) -> Self {
         self.scale_factor = scale_factor;
+        self
+    }
+
+    pub fn with_flex_wrap(mut self, flex_wrap: bool) -> Self {
+        self.flex_wrap = flex_wrap;
+        self
+    }
+
+    pub fn with_max_width(mut self, max_width_px: f64) -> Self {
+        self.max_width_px = Some(max_width_px);
         self
     }
 
