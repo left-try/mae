@@ -11,6 +11,7 @@ pub mod eval;
 pub mod ids;
 pub mod policies;
 pub mod ports;
+pub mod semantic_cli;
 pub mod semantic_ui;
 pub mod task;
 pub mod verification;
@@ -34,10 +35,14 @@ pub use policies::{
     HealthScore, HealthScorePolicy, RecoveryDecision, RecoveryPolicy,
 };
 pub use ports::{
-    AgentBackendPort, AgentResult, ArtifactRepositoryPort, BuildGateReport, DomainError,
-    KnowledgeRepositoryPort, PromptProvenance, PromptProviderPort, PromptSource,
-    ScenarioInvocation, SourceAdapterPort, TargetAdapterPort, TargetScaffoldSummary,
-    VerifierPluginPort,
+    AgentBackendPort, AgentResult, ArtifactRepositoryPort, BuildGateReport, CliSourceAdapterPort,
+    CliTargetAdapterPort, CliVerifierPort, DomainError, KnowledgeRepositoryPort, PromptProvenance,
+    PromptProviderPort, PromptSource, ScenarioInvocation, SourceAdapterPort, TargetAdapterPort,
+    TargetScaffoldSummary, VerifierPluginPort,
+};
+pub use semantic_cli::{
+    CliArgument, CliArgumentKind, CliCommandNode, CliExitCodeMapping, CliGapReasonCode,
+    CliIoContract, CliSemanticModel, CliValueType,
 };
 pub use semantic_ui::{
     ApiEndpointBinding, AssetEntry, ComponentNode, EffectBinding, InteractionBinding,

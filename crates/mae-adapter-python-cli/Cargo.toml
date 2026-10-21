@@ -1,0 +1,10 @@
+[package]
+name = "mae-adapter-python-cli"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Python CLI Source Adapter for MAE (Migrate Absolutely Everything)"
+
+[dependencies]
+mae-domain = { path = "../mae-domain" }

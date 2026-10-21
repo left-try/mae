@@ -1,0 +1,6 @@
+id,name,department,age,salary,active
+1,Alice Smith,Engineering,28,85000.5,true
+2,Bob Jones,Marketing,42,72000.0,false
+3,Charlie Brown,Engineering,35,96500.0,true
+4,Diana Prince,Finance,31,110000.0,true
+5,Evan Wright,Engineering,24,68000.25,true

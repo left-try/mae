@@ -37,3 +37,14 @@
 - **Windows Slint Target (`WindowsDesktop`)**: A genuine native desktop application written in Rust + Slint configured for Windows desktop execution (`#![cfg_attr(target_os = "windows", windows_subsystem = "windows")]`, native window geometry/DPI/theming) while supporting headless verification on Linux/Windows CI.
 - **Logic-UI Separation**: Architectural rule in generated targets keeping state, events, reducers, async effects, and navigation in pure Rust (`src/app/`) and declarative view layout, styling, and property/callback bindings in Slint (`ui/*.slint`).
 - **Native Compliance Gate (`NativeComplianceVerifier`)**: Independent verifier that rejects fake migrations (WebView wrappers such as `wry`/`tauri`/`webview2`, Electron, screenshot-as-UI, or whole-app proxying to the React runtime).
+
+---
+
+## CLI Target Vocabulary (`Python CLI -> Native Rust CLI`)
+
+- **CLI Semantic Model (`CliSemanticModel`)**: Pure domain IR capturing command hierarchy (`CliCommandNode`), argument definitions (`CliArgument`), I/O streaming contracts (`CliIoContract`), deterministic exit code mappings (`CliExitCodeMapping`), and concurrency profiles (`CliConcurrencyModel`).
+- **CLI Concurrency Model (`CliConcurrencyModel`)**: Classification of source concurrency patterns (`Sequential`, `ParallelThreads`, `MultiProcessing`, `AsyncEventLoop`) mapped to zero-cost, zero-serialization native Rust execution.
+- **Scoped Data Parallelism**: Rust concurrency pattern using `std::thread::scope` enabling worker threads to borrow immutable slices of records (`&[Record]`) without IPC, pickling, or heap allocation overhead, replacing Python `multiprocessing.Pool`.
+- **Logic-CLI Separation**: Architectural rule in generated Rust CLI utilities keeping argument parsing, validation, and flag dispatch in `src/cli.rs` and pure, testable domain business logic in `src/core/`.
+- **Differential Behavioral Oracle (`CliDifferentialVerifier`)**: Independent verifier executing identical argument vectors and stdin streams across both the Python source and the compiled Rust binary, asserting exact exit code equality, stdout tree parity, diagnostic stderr behavior, and performance acceleration.
+

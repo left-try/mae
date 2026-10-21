@@ -10,3 +10,6 @@ mae-domain = { path = "../mae-domain" }
 
 [dev-dependencies]
 mae-adapter-rust-slint = { path = "../mae-adapter-rust-slint" }
+mae-adapter-python-cli = { path = "../mae-adapter-python-cli" }
+mae-adapter-rust-cli = { path = "../mae-adapter-rust-cli" }
+

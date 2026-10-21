@@ -17,11 +17,12 @@ use mae_application::{
     MigrationRunReport, OkfKnowledgeRepository, OpfPromptProvider,
 };
 use mae_domain::{
-    CapabilityReport, ContentHash, Contract, ContractId, ContractSeverity, DomainError,
-    MigrationAggregate, MigrationId, MigrationStrategy, MigrationTask, SemanticUiModel,
-    SourceAdapterPort, TargetPlatform, TaskId, TolerancePolicy, VerificationCategory,
-    VerifierPluginPort,
+    CapabilityReport, CliSourceAdapterPort, CliTargetAdapterPort, ContentHash, Contract,
+    ContractId, ContractSeverity, DomainError, MigrationAggregate, MigrationId, MigrationStrategy,
+    MigrationTask, SemanticUiModel, SourceAdapterPort, TargetPlatform, TaskId, TolerancePolicy,
+    VerificationCategory, VerifierPluginPort,
 };
+
 use mae_verification::{
     BehavioralDifferentialVerifier, BuildVerifier, ConsistencyAndArchitectureEvaluator,
     NativeComplianceVerifier, ScenarioTrace, VisualParityVerifier, VisualSnapshot,
@@ -527,8 +528,97 @@ pub fn execute_cli_args(args: &[String]) -> Result<String, DomainError> {
                 m.overall_consistency_score()
             ))
         }
+        "analyze-cli" => {
+            let py_file = pos
+                .get(2)
+                .map(String::as_str)
+                .unwrap_or("fixtures/python-rust-cli/source/dataforge.py");
+            let adapter = mae_adapter_python_cli::PythonCliSourceAdapter::new();
+            let model = adapter.extract_semantics(py_file)?;
+            let report = adapter.assess_capabilities(&model)?;
+            let concurrency_desc = if model.is_concurrent() {
+                format!(
+                    "concurrency={:?}",
+                    model
+                        .concurrency_patterns
+                        .iter()
+                        .map(|p| p.as_str())
+                        .collect::<Vec<_>>()
+                )
+            } else {
+                "concurrency=SEQUENTIAL".to_string()
+            };
+            Ok(format!(
+                "MAE Analyze CLI Complete: program={}, version={}, subcommands={}, gaps={}, {}",
+                model.program_name,
+                model.version,
+                model.total_subcommands(),
+                report.gaps.len(),
+                concurrency_desc
+            ))
+        }
+        "migrate-cli" => {
+            let py_file = pos
+                .get(2)
+                .map(String::as_str)
+                .unwrap_or("fixtures/python-rust-cli/source/dataforge.py");
+            let target_out = pos
+                .get(3)
+                .map(String::as_str)
+                .unwrap_or("target/dataforge-rust-out");
+
+            let py_adapter = mae_adapter_python_cli::PythonCliSourceAdapter::new();
+            let model = py_adapter.extract_semantics(py_file)?;
+
+            let rust_adapter = mae_adapter_rust_cli::RustCliTargetAdapter::new();
+            let summary = rust_adapter.scaffold_target(&model, target_out)?;
+
+            let mut scenarios = vec![
+                mae_verification::CliDifferentialScenario::new("SCENARIO_VERSION", &["--version"]),
+                mae_verification::CliDifferentialScenario::new("SCENARIO_MISSING_SUBCOMMAND", &[]),
+            ];
+            // If employees.json fixture is adjacent, also verify inspect and concurrent crunch scenarios
+            let candidate_json = Path::new(py_file).parent().and_then(|p| p.parent()).map(|p| p.join("data/employees.json"));
+            if let Some(json_path) = candidate_json {
+                if json_path.exists() {
+                    scenarios.push(mae_verification::CliDifferentialScenario::new(
+                        "SCENARIO_INSPECT",
+                        &["inspect", json_path.to_str().unwrap()],
+                    ));
+                    scenarios.push(mae_verification::CliDifferentialScenario::new(
+                        "SCENARIO_CRUNCH_MULTIPROCESSING",
+                        &[
+                            "crunch",
+                            json_path.to_str().unwrap(),
+                            "--mode",
+                            "multiprocessing",
+                            "-w",
+                            "2",
+                            "-r",
+                            "10",
+                        ],
+                    ));
+                }
+            }
+            let verifier = mae_verification::CliDifferentialVerifier::new();
+            let evidence = verifier.verify(
+                py_file,
+                target_out,
+                &scenarios,
+                mae_domain::ArtifactRevision::new(1),
+            )?;
+
+            Ok(format!(
+                "MAE CLI Migration Complete: target_crate={}, files_generated={}, status={}, scenarios_passed={}/{}",
+                summary.target_crate_name,
+                summary.files_generated.len(),
+                evidence.status,
+                evidence.coverage.passed.len(),
+                evidence.coverage.declared_scenarios.len()
+            ))
+        }
         _ => Ok(
-            "MAE v0.1 CLI — Commands: analyze [--platform windows|ubuntu|cross-platform] <src> | plan [--platform ...] <src> | migrate [--platform ...] <root> <src> <out> | verify [--platform ...] <out> | run-e2e [--platform ...] <root> <src> <out>"
+            "MAE v0.1 CLI — Commands: analyze [--platform windows|ubuntu|cross-platform] <src> | plan [--platform ...] <src> | migrate [--platform ...] <root> <src> <out> | verify [--platform ...] <out> | run-e2e [--platform ...] <root> <src> <out> | analyze-cli <py_file> | migrate-cli <py_file> <target_out>"
                 .to_string(),
         ),
     }
