@@ -393,7 +393,7 @@ fn test_cli_subcommands_analyze_and_migrate_cli_end_to_end() {
     ])
     .expect("migrate-cli failed");
     assert!(migrate_out.contains("target_crate=dataforge"));
-    assert!(migrate_out.contains("status=PASS"));
+    assert!(migrate_out.contains("status=PASS"), "{}", migrate_out);
     assert!(migrate_out.contains("files_generated=11"));
 
     let _ = fs::remove_dir_all(target_out);

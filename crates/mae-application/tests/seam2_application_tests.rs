@@ -9,11 +9,11 @@ use mae_application::{
     MigrationOrchestrator, OkfKnowledgeRepository, OpfPrompt, OpfPromptProvider, WaveSchedule,
 };
 use mae_domain::{
-    ArtifactId, ArtifactKind, ArtifactProvenance, ArtifactRepositoryPort, ArtifactRevision,
-    CapabilityReport, ContentHash, Contract, ContractSeverity, CoverageDisclosure, DomainError,
-    EvidenceRecord, KnowledgeRepositoryPort, MigrationAggregate, MigrationId, MigrationStrategy,
-    MigrationTask, PlanHash, PromptProviderPort, SemanticUiModel, SourceAdapterPort,
-    TargetAdapterPort, TargetPlatform, TargetScaffoldSummary, TaskId, TaskState,
+    AgentBackendPort, ArtifactId, ArtifactKind, ArtifactProvenance, ArtifactRepositoryPort,
+    ArtifactRevision, CapabilityReport, ContentHash, Contract, ContractSeverity,
+    CoverageDisclosure, DomainError, EvidenceRecord, KnowledgeRepositoryPort, MigrationAggregate,
+    MigrationId, MigrationStrategy, MigrationTask, PlanHash, PromptProviderPort, SemanticUiModel,
+    SourceAdapterPort, TargetAdapterPort, TargetPlatform, TargetScaffoldSummary, TaskId, TaskState,
     VerificationCategory, VerificationStatus, VerifierPluginPort, VersionedArtifact,
 };
 
@@ -621,9 +621,93 @@ fn test_agent_backend_cli_flag_mappings() {
     );
 }
 
+#[test]
+fn test_unconfigured_provider_backends_do_not_report_prompt_execution_success() {
+    let (_, provenance) = OpfPromptProvider::from_root(workspace_root())
+        .unwrap()
+        .render_prompt(
+            "migration.code-migrator",
+            &[("context_path", "target/tasks/task-1")],
+        )
+        .unwrap();
+
+    assert!(CodexAgentBackend::new()
+        .execute_prompt("implement", &provenance)
+        .is_err());
+    assert!(ClaudeCodeAgentBackend::new()
+        .execute_prompt("implement", &provenance)
+        .is_err());
+    assert!(CopilotAgentBackend::new()
+        .execute_prompt("implement", &provenance)
+        .is_err());
+}
+
 // ---------------------------------------------------------------------------
 // 7. Full Orchestrator Execution — Happy Path
 // ---------------------------------------------------------------------------
+
+#[test]
+fn test_orchestrator_does_not_accept_task_when_agent_reports_failure() {
+    let mut orchestrator = MigrationOrchestrator::new(
+        Box::new(OpfPromptProvider::from_root(workspace_root()).unwrap()),
+        Box::new(OkfKnowledgeRepository::new(workspace_root())),
+        Box::new(DeterministicMockAgentBackend::new().with_default_success(false)),
+        Box::new(MockSourceAdapter),
+        Box::new(MockTargetAdapter),
+        Box::new(InMemoryArtifactRepository::new()),
+        vec![
+            Box::new(AlwaysPassVerifier::new(VerificationCategory::Build)),
+            Box::new(AlwaysPassVerifier::new(
+                VerificationCategory::NativeCompliance,
+            )),
+            Box::new(AlwaysPassVerifier::new(VerificationCategory::Behavioral)),
+        ],
+    );
+    let mut aggregate = MigrationAggregate::new("mig-agent-failure", "source-fingerprint");
+    aggregate.add_contract(Contract::new(
+        "contract-build",
+        "Target build gate",
+        "Must compile cleanly",
+        VerificationCategory::Build,
+        ContractSeverity::Critical,
+    ));
+    aggregate.add_contract(Contract::new(
+        "contract-native",
+        "Native compliance gate",
+        "Must be a native target",
+        VerificationCategory::NativeCompliance,
+        ContractSeverity::Critical,
+    ));
+    aggregate.add_contract(Contract::new(
+        "contract-behavior",
+        "Behavioral parity",
+        "Must preserve observable behavior",
+        VerificationCategory::Behavioral,
+        ContractSeverity::Critical,
+    ));
+    aggregate.add_task(
+        MigrationTask::new(
+            "task-agent-failure",
+            "Generate target",
+            MigrationStrategy::DirectNativeMapping,
+        )
+        .with_required_contract("contract-build")
+        .with_required_contract("contract-native")
+        .with_required_contract("contract-behavior"),
+    );
+
+    let result = orchestrator.run(&mut aggregate, "source", "target");
+
+    assert!(result.is_err(), "agent failure must stop the migration run");
+    assert_eq!(
+        aggregate
+            .get_task(&TaskId::new("task-agent-failure"))
+            .unwrap()
+            .state,
+        TaskState::Failed
+    );
+    assert!(aggregate.evidence_ledger.is_empty());
+}
 
 #[test]
 fn test_orchestrator_full_run_happy_path() {
