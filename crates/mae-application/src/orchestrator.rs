@@ -215,6 +215,11 @@ impl MigrationOrchestrator {
                         .execute_prompt(&combined_prompt, &code_prov)?;
                     eval_metrics
                         .record_agent_invocation(&combined_prompt, &agent_result.log_summary);
+                    if !agent_result.success {
+                        let reason = format!("Agent backend failed: {}", agent_result.log_summary);
+                        aggregate.mark_task_failed(task_id, &reason)?;
+                        return Err(DomainError::PortError(reason));
+                    }
 
                     // Emit target code and advance target revision
                     let current_task = aggregate.get_task(task_id).unwrap().clone();
@@ -319,6 +324,14 @@ impl MigrationOrchestrator {
                                         &fail_prompt,
                                         &fail_res.log_summary,
                                     );
+                                    if !fail_res.success {
+                                        let reason = format!(
+                                            "Failure resolver agent failed: {}",
+                                            fail_res.log_summary
+                                        );
+                                        aggregate.mark_task_failed(task_id, &reason)?;
+                                        return Err(DomainError::PortError(reason));
+                                    }
                                     // Retry loop continues to attempt repair
                                 }
                                 RecoveryDecision::Block => {

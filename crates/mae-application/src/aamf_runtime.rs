@@ -542,11 +542,7 @@ impl AgentBackendPort for CodexAgentBackend {
         _rendered_prompt: &str,
         provenance: &PromptProvenance,
     ) -> Result<AgentResult, DomainError> {
-        Ok(AgentResult {
-            output_artifacts: Vec::new(),
-            log_summary: format!("Codex backend executed prompt: {}", provenance.prompt_id),
-            success: true,
-        })
+        Err(unconfigured_agent_backend("Codex", provenance))
     }
 }
 
@@ -576,14 +572,7 @@ impl AgentBackendPort for ClaudeCodeAgentBackend {
         _rendered_prompt: &str,
         provenance: &PromptProvenance,
     ) -> Result<AgentResult, DomainError> {
-        Ok(AgentResult {
-            output_artifacts: Vec::new(),
-            log_summary: format!(
-                "ClaudeCode backend executed prompt: {}",
-                provenance.prompt_id
-            ),
-            success: true,
-        })
+        Err(unconfigured_agent_backend("Claude Code", provenance))
     }
 }
 
@@ -618,12 +607,15 @@ impl AgentBackendPort for CopilotAgentBackend {
         _rendered_prompt: &str,
         provenance: &PromptProvenance,
     ) -> Result<AgentResult, DomainError> {
-        Ok(AgentResult {
-            output_artifacts: Vec::new(),
-            log_summary: format!("Copilot backend executed prompt: {}", provenance.prompt_id),
-            success: true,
-        })
+        Err(unconfigured_agent_backend("Copilot", provenance))
     }
+}
+
+fn unconfigured_agent_backend(provider: &str, provenance: &PromptProvenance) -> DomainError {
+    DomainError::PortError(format!(
+        "{} agent backend cannot execute prompt '{}' because process execution is not configured",
+        provider, provenance.prompt_id
+    ))
 }
 
 /// Deterministic mock AI agent backend for fast, reproducible testing.

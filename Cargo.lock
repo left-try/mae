@@ -3,7 +3,21 @@
 version = 4
 
 [[package]]
+name = "mae-adapter-python-cli"
+version = "0.1.0"
+dependencies = [
+ "mae-domain",
+]
+
+[[package]]
 name = "mae-adapter-react"
+version = "0.1.0"
+dependencies = [
+ "mae-domain",
+]
+
+[[package]]
+name = "mae-adapter-rust-cli"
 version = "0.1.0"
 dependencies = [
  "mae-domain",
@@ -27,7 +41,9 @@ dependencies = [
 name = "mae-cli"
 version = "0.1.0"
 dependencies = [
+ "mae-adapter-python-cli",
  "mae-adapter-react",
+ "mae-adapter-rust-cli",
  "mae-adapter-rust-slint",
  "mae-application",
  "mae-domain",
@@ -42,6 +58,8 @@ version = "0.1.0"
 name = "mae-verification"
 version = "0.1.0"
 dependencies = [
+ "mae-adapter-python-cli",
+ "mae-adapter-rust-cli",
  "mae-adapter-rust-slint",
  "mae-domain",
 ]

@@ -239,6 +239,22 @@ impl MigrationAggregate {
         Ok(())
     }
 
+    /// Transitions an active task to Failed and records the state change.
+    pub fn mark_task_failed(&mut self, task_id: &TaskId, reason: &str) -> Result<(), DomainError> {
+        let task = self
+            .tasks
+            .get_mut(task_id)
+            .ok_or_else(|| DomainError::TaskNotFound(task_id.clone()))?;
+        let from = task.state;
+        task.mark_failed(reason)?;
+        self.uncommitted_events.push(DomainEvent::TaskStateChanged {
+            task_id: task_id.clone(),
+            from,
+            to: TaskState::Failed,
+        });
+        Ok(())
+    }
+
     /// Computes the current Crane-inspired health score.
     pub fn health_score(&self) -> HealthScore {
         let task_slice: Vec<MigrationTask> = self.tasks.values().cloned().collect();

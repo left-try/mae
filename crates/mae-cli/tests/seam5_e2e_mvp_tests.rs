@@ -365,3 +365,36 @@ fn mvp_ubuntu_desktop_full_e2e_pipeline_and_cli_flag() {
 
     let _ = fs::remove_dir_all(&temp);
 }
+
+#[test]
+fn test_cli_subcommands_analyze_and_migrate_cli_end_to_end() {
+    let root = workspace_root();
+    let py_file = root.join("fixtures/python-rust-cli/source/dataforge.py");
+    let target_out = root.join(format!(
+        "target/tmp/dataforge_cli_e2e_{}",
+        std::process::id()
+    ));
+
+    let analyze_out = execute_cli_args(&[
+        "mae".to_string(),
+        "analyze-cli".to_string(),
+        py_file.to_str().unwrap().to_string(),
+    ])
+    .expect("analyze-cli failed");
+    assert!(analyze_out.contains("program=dataforge"));
+    assert!(analyze_out.contains("subcommands=5"));
+    assert!(analyze_out.contains("concurrency="));
+
+    let migrate_out = execute_cli_args(&[
+        "mae".to_string(),
+        "migrate-cli".to_string(),
+        py_file.to_str().unwrap().to_string(),
+        target_out.to_str().unwrap().to_string(),
+    ])
+    .expect("migrate-cli failed");
+    assert!(migrate_out.contains("target_crate=dataforge"));
+    assert!(migrate_out.contains("status=PASS"), "{}", migrate_out);
+    assert!(migrate_out.contains("files_generated=11"));
+
+    let _ = fs::remove_dir_all(target_out);
+}

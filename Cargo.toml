@@ -3,10 +3,13 @@ members = [
     "crates/mae-domain",
     "crates/mae-application",
     "crates/mae-adapter-react",
+    "crates/mae-adapter-python-cli",
     "crates/mae-adapter-rust-slint",
+    "crates/mae-adapter-rust-cli",
     "crates/mae-verification",
     "crates/mae-cli",
 ]
+
 resolver = "2"
 
 [workspace.package]

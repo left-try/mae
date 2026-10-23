@@ -194,3 +194,43 @@ pub trait KnowledgeRepositoryPort {
     fn search(&self, query: &str) -> Result<Vec<String>, DomainError>;
     fn validate_bundle(&self) -> Result<bool, DomainError>;
 }
+
+/// Port trait for CLI source adapters (e.g. Python argparse / click analyzer).
+pub trait CliSourceAdapterPort {
+    fn discover(&self, source_path: &str) -> Result<VersionedArtifact, DomainError>;
+    fn extract_semantics(
+        &self,
+        source_path: &str,
+    ) -> Result<crate::semantic_cli::CliSemanticModel, DomainError>;
+    fn assess_capabilities(
+        &self,
+        model: &crate::semantic_cli::CliSemanticModel,
+    ) -> Result<CapabilityReport, DomainError>;
+}
+
+/// Port trait for CLI target code generation adapters (e.g. Rust CLI generator).
+pub trait CliTargetAdapterPort {
+    fn scaffold_target(
+        &self,
+        model: &crate::semantic_cli::CliSemanticModel,
+        target_dir: &str,
+    ) -> Result<TargetScaffoldSummary, DomainError>;
+
+    fn emit_target_code(
+        &self,
+        task: &MigrationTask,
+        model: &crate::semantic_cli::CliSemanticModel,
+        target_dir: &str,
+    ) -> Result<ArtifactRevision, DomainError>;
+}
+
+/// Port trait for differential CLI parity verification.
+pub trait CliVerifierPort {
+    fn verify_scenario(
+        &self,
+        python_script: &str,
+        target_dir: &str,
+        scenario: &ScenarioInvocation,
+        target_rev: ArtifactRevision,
+    ) -> Result<EvidenceRecord, DomainError>;
+}

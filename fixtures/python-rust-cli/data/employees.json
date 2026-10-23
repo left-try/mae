@@ -1,0 +1,7 @@
+[
+  {"id": 1, "name": "Alice Smith", "department": "Engineering", "age": 28, "salary": 85000.50, "active": true},
+  {"id": 2, "name": "Bob Jones", "department": "Marketing", "age": 42, "salary": 72000.00, "active": false},
+  {"id": 3, "name": "Charlie Brown", "department": "Engineering", "age": 35, "salary": 96500.00, "active": true},
+  {"id": 4, "name": "Diana Prince", "department": "Finance", "age": 31, "salary": 110000.00, "active": true},
+  {"id": 5, "name": "Evan Wright", "department": "Engineering", "age": 24, "salary": 68000.25, "active": true}
+]
