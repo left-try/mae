@@ -243,3 +243,65 @@ fn test_emit_target_code_advances_artifact_revision() {
     assert_eq!(rev1.as_u64(), 1);
     assert_eq!(rev2.as_u64(), 2);
 }
+
+#[test]
+fn test_scaffold_and_compile_lead_enrich_pipeline_target() {
+    use mae_domain::semantic_cli::CliPipelineCapability;
+
+    let tmp = TempDir::new("lead_enrich_scaffold");
+    let adapter = RustCliTargetAdapter::new();
+
+    let root = CliCommandNode::new(
+        "lead_enrich",
+        "Lead sourcing and enrichment deterministic CLI pipeline slice",
+    )
+    .with_subcommand(CliCommandNode::new("ingest", "Normalize raw leads"))
+    .with_subcommand(CliCommandNode::new(
+        "enrich",
+        "Enrich leads with cache, retry, and resume",
+    ))
+    .with_subcommand(CliCommandNode::new("report", "Emit stage report"));
+
+    let model = CliSemanticModel::new(
+        "lead_enrich",
+        "1.2.0",
+        "Lead sourcing and enrichment deterministic CLI pipeline slice",
+        root,
+    )
+    .with_pipeline_capability(CliPipelineCapability::StatePersistence)
+    .with_pipeline_capability(CliPipelineCapability::CacheLedger)
+    .with_pipeline_capability(CliPipelineCapability::RetryPolicy)
+    .with_pipeline_capability(CliPipelineCapability::CheckpointResume);
+
+    let summary = adapter
+        .scaffold_target(&model, tmp.as_str())
+        .expect("Failed to scaffold lead_enrich target");
+
+    assert_eq!(summary.target_crate_name, "lead_enrich");
+    assert!(tmp.path.join("Cargo.toml").exists());
+    assert!(tmp.path.join("src/main.rs").exists());
+    assert!(tmp.path.join("src/cli.rs").exists());
+    assert!(tmp.path.join("src/core/mod.rs").exists());
+    assert!(tmp.path.join("src/core/ingest.rs").exists());
+    assert!(tmp.path.join("src/core/cache.rs").exists());
+    assert!(tmp.path.join("src/core/retry.rs").exists());
+    assert!(tmp.path.join("src/core/enrich.rs").exists());
+    assert!(tmp.path.join("src/core/report.rs").exists());
+
+    let workspace_tmp = tmp.path.parent().unwrap().to_str().unwrap();
+    let output = Command::new("cargo")
+        .arg("test")
+        .current_dir(&tmp.path)
+        .env("TMPDIR", workspace_tmp)
+        .output()
+        .expect("Failed to run cargo test on lead_enrich target");
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        panic!(
+            "lead_enrich cargo test failed!\nSTDOUT:\n{}\nSTDERR:\n{}",
+            stdout, stderr
+        );
+    }
+}

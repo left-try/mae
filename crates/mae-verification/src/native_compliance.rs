@@ -16,13 +16,23 @@ const FORBIDDEN_WRAPPER_TOKENS: &[&str] = &[
     "whole_app_proxy",
 ];
 
-/// Independent verifier proving the target is a genuine native Rust + Slint application,
-/// not a WebView wrapper, Electron shell, screenshot-as-UI, or whole-app HTTP proxy.
+const FORBIDDEN_CLI_WRAPPER_TOKENS: &[&str] = &[
+    "pyo3",
+    "rustpython",
+    "command::new(\"python",
+    "command::new(\"python3",
+    "whole_app_proxy",
+];
+
+/// Independent verifier proving the target is a genuine native Rust application
+/// (either Slint GUI or native CLI), not a WebView wrapper, Electron shell,
+/// Python subprocess wrapper, screenshot-as-UI, or whole-app proxy.
 #[derive(Debug, Clone)]
 pub struct NativeComplianceVerifier {
     pub target_dir: PathBuf,
     pub require_windows_subsystem: bool,
     pub require_linux_desktop_entry: bool,
+    pub is_cli_target: bool,
     pub source_revision: ArtifactRevision,
 }
 
@@ -32,6 +42,7 @@ impl NativeComplianceVerifier {
             target_dir: target_dir.into(),
             require_windows_subsystem,
             require_linux_desktop_entry: false,
+            is_cli_target: false,
             source_revision: ArtifactRevision::initial(),
         }
     }
@@ -41,6 +52,17 @@ impl NativeComplianceVerifier {
             target_dir: target_dir.into(),
             require_windows_subsystem: platform.requires_windows_subsystem(),
             require_linux_desktop_entry: platform.requires_linux_desktop_entry(),
+            is_cli_target: false,
+            source_revision: ArtifactRevision::initial(),
+        }
+    }
+
+    pub fn for_cli_target(target_dir: impl Into<PathBuf>) -> Self {
+        Self {
+            target_dir: target_dir.into(),
+            require_windows_subsystem: false,
+            require_linux_desktop_entry: false,
+            is_cli_target: true,
             source_revision: ArtifactRevision::initial(),
         }
     }
@@ -56,8 +78,6 @@ impl NativeComplianceVerifier {
 
         let cargo_toml_path = self.target_dir.join("Cargo.toml");
         let main_rs_path = self.target_dir.join("src/main.rs");
-        let reducer_rs_path = self.target_dir.join("src/app/reducer.rs");
-        let app_slint_path = self.target_dir.join("ui/app.slint");
 
         if !cargo_toml_path.exists() {
             violations.push("Missing Cargo.toml in target directory".to_string());
@@ -65,6 +85,50 @@ impl NativeComplianceVerifier {
         if !main_rs_path.exists() {
             violations.push("Missing src/main.rs in target directory".to_string());
         }
+
+        if self.is_cli_target {
+            let cli_rs_path = self.target_dir.join("src/cli.rs");
+            let core_mod_path = self.target_dir.join("src/core/mod.rs");
+            if !cli_rs_path.exists() {
+                violations.push("Missing src/cli.rs in CLI target directory".to_string());
+            }
+            if !core_mod_path.exists() {
+                violations.push("Missing src/core/mod.rs in CLI target directory".to_string());
+            }
+            if let Ok(cargo_toml) = fs::read_to_string(&cargo_toml_path) {
+                let lower = cargo_toml.to_lowercase();
+                for token in FORBIDDEN_WRAPPER_TOKENS
+                    .iter()
+                    .chain(FORBIDDEN_CLI_WRAPPER_TOKENS.iter())
+                {
+                    if lower.contains(token) {
+                        violations.push(format!(
+                            "Forbidden wrapper dependency '{token}' detected in Cargo.toml"
+                        ));
+                    }
+                }
+            }
+            scan_rs_files_for_tokens(
+                &self.target_dir.join("src"),
+                FORBIDDEN_WRAPPER_TOKENS,
+                &mut violations,
+            );
+            scan_rs_files_for_tokens(
+                &self.target_dir.join("src"),
+                FORBIDDEN_CLI_WRAPPER_TOKENS,
+                &mut violations,
+            );
+
+            return if violations.is_empty() {
+                Ok((VerificationStatus::Pass, violations))
+            } else {
+                Ok((VerificationStatus::Fail, violations))
+            };
+        }
+
+        let reducer_rs_path = self.target_dir.join("src/app/reducer.rs");
+        let app_slint_path = self.target_dir.join("ui/app.slint");
+
         if !reducer_rs_path.exists() {
             violations.push(
                 "Missing src/app/reducer.rs (Logic-UI separation violation: Rust reducer required)"
@@ -151,7 +215,11 @@ impl NativeComplianceVerifier {
         }
 
         // Also scan all .rs files under src/ for forbidden wrapper tokens
-        scan_rs_files_for_wrappers(&self.target_dir.join("src"), &mut violations);
+        scan_rs_files_for_tokens(
+            &self.target_dir.join("src"),
+            FORBIDDEN_WRAPPER_TOKENS,
+            &mut violations,
+        );
 
         if violations.is_empty() {
             Ok((VerificationStatus::Pass, violations))
@@ -161,18 +229,18 @@ impl NativeComplianceVerifier {
     }
 }
 
-fn scan_rs_files_for_wrappers(dir: &Path, violations: &mut Vec<String>) {
+fn scan_rs_files_for_tokens(dir: &Path, tokens: &[&str], violations: &mut Vec<String>) {
     let Ok(entries) = fs::read_dir(dir) else {
         return;
     };
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
-            scan_rs_files_for_wrappers(&path, violations);
+            scan_rs_files_for_tokens(&path, tokens, violations);
         } else if path.extension().and_then(|e| e.to_str()) == Some("rs") {
             if let Ok(content) = fs::read_to_string(&path) {
                 let lower = content.to_lowercase();
-                for token in FORBIDDEN_WRAPPER_TOKENS {
+                for token in tokens {
                     if lower.contains(token) {
                         let msg = format!(
                             "Forbidden wrapper/proxy token '{}' in {}",
@@ -200,12 +268,20 @@ impl VerifierPluginPort for NativeComplianceVerifier {
         target_rev: ArtifactRevision,
     ) -> Result<EvidenceRecord, DomainError> {
         let (status, violations) = self.inspect_target()?;
-        let scenarios = vec![
-            "native.slint_window".to_string(),
-            "native.no_webview_or_electron".to_string(),
-            "native.logic_ui_separation".to_string(),
-            "native.windows_subsystem".to_string(),
-        ];
+        let scenarios = if self.is_cli_target {
+            vec![
+                "native.cli_binary_entrypoint".to_string(),
+                "native.no_python_subprocess_or_pyo3_wrapper".to_string(),
+                "native.cli_core_separation".to_string(),
+            ]
+        } else {
+            vec![
+                "native.slint_window".to_string(),
+                "native.no_webview_or_electron".to_string(),
+                "native.logic_ui_separation".to_string(),
+                "native.windows_subsystem".to_string(),
+            ]
+        };
 
         let coverage = if status.is_pass() {
             CoverageDisclosure::full(scenarios)
@@ -219,12 +295,17 @@ impl VerifierPluginPort for NativeComplianceVerifier {
         };
 
         let summary = if violations.is_empty() {
-            "Target passed native Rust + Slint + Windows subsystem compliance gate".to_string()
+            if self.is_cli_target {
+                "Target passed native Rust CLI compliance gate (no Python subprocess/PyO3 wrapper)"
+                    .to_string()
+            } else {
+                "Target passed native Rust + Slint + Windows subsystem compliance gate".to_string()
+            }
         } else {
             format!("Native compliance failed: {}", violations.join("; "))
         };
 
-        Ok(EvidenceRecord::new(
+        let mut record = EvidenceRecord::new(
             contract.id.clone(),
             "mae.verifier.native-compliance/0.1",
             VerificationCategory::NativeCompliance,
@@ -234,7 +315,13 @@ impl VerifierPluginPort for NativeComplianceVerifier {
             coverage,
             summary,
         )
-        .with_produced_file("ui/app.slint")
-        .with_produced_file("src/main.rs"))
+        .with_produced_file("src/main.rs");
+
+        if self.is_cli_target {
+            record = record.with_produced_file("src/cli.rs");
+        } else {
+            record = record.with_produced_file("ui/app.slint");
+        }
+        Ok(record)
     }
 }

@@ -190,3 +190,39 @@ fn test_cli_concurrency_patterns_and_performance_contract() {
         "CLI_PYTHON_GIL_CONTENTION"
     );
 }
+
+#[test]
+fn test_cli_pipeline_capabilities_and_stage_exit_codes() {
+    use mae_domain::semantic_cli::CliPipelineCapability;
+
+    let root = CliCommandNode::new("lead_enrich", "Lead enrichment pipeline CLI")
+        .with_subcommand(CliCommandNode::new("ingest", "Normalize raw leads"))
+        .with_subcommand(CliCommandNode::new(
+            "enrich",
+            "Enrich leads with cache and retry",
+        ))
+        .with_subcommand(CliCommandNode::new("report", "Emit pipeline stage report"));
+
+    let base_model = CliSemanticModel::new(
+        "lead_enrich",
+        "1.0.0",
+        "Lead enrichment pipeline CLI",
+        root.clone(),
+    );
+    assert_eq!(base_model.exit_codes.stage_error, 4);
+    assert!(base_model.pipeline_capabilities.is_empty());
+
+    let enriched_model = base_model
+        .clone()
+        .with_pipeline_capability(CliPipelineCapability::StatePersistence)
+        .with_pipeline_capability(CliPipelineCapability::CacheLedger)
+        .with_pipeline_capability(CliPipelineCapability::RetryPolicy)
+        .with_pipeline_capability(CliPipelineCapability::CheckpointResume);
+
+    assert!(enriched_model.has_pipeline_capability(CliPipelineCapability::StatePersistence));
+    assert!(enriched_model.has_pipeline_capability(CliPipelineCapability::CacheLedger));
+    assert!(enriched_model.has_pipeline_capability(CliPipelineCapability::RetryPolicy));
+    assert!(enriched_model.has_pipeline_capability(CliPipelineCapability::CheckpointResume));
+    assert_eq!(enriched_model.pipeline_capabilities.len(), 4);
+    assert_ne!(base_model.content_hash(), enriched_model.content_hash());
+}

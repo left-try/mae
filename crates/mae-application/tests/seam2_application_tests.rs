@@ -1064,3 +1064,199 @@ fn test_orchestrator_checkpoint_resume_after_interruption() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// 11. Reproducibility Gate & OS-Level Subprocess Agent Containment Tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_reproducibility_gate_validates_pinned_commit_and_fixture_hashes() {
+    use mae_application::ReproducibilityGate;
+
+    let root = workspace_root();
+    let fixture = root.join("fixtures/python-rust-cli/data/employees.json");
+
+    let manifest = ReproducibilityGate::capture(&root, std::slice::from_ref(&fixture))
+        .expect("Should capture reproducibility manifest from workspace");
+
+    assert_eq!(manifest.mae_commit_sha.len(), 40);
+    assert!(manifest.rustc_version.contains("rustc"));
+    assert_eq!(manifest.fixture_hashes.len(), 1);
+
+    // Verification succeeds against the exact captured commit and unmodified fixture
+    manifest
+        .verify(&root)
+        .expect("Verification against matching commit and fixture should pass");
+
+    // Verification fails if expected commit SHA does not match
+    let mut wrong_sha_manifest = manifest.clone();
+    wrong_sha_manifest.mae_commit_sha = "0000000000000000000000000000000000000000".to_string();
+    let err = wrong_sha_manifest.verify(&root).unwrap_err();
+    assert!(err.to_string().contains("Reproducibility gate failed"));
+}
+
+#[test]
+fn test_configured_subprocess_agent_executes_under_containment_and_enforces_network_policy() {
+    use mae_application::AgentContainmentPolicy;
+    use std::time::Duration;
+
+    let temp_dir = unique_temp_dir("agent_containment_ok");
+    let ro_fixture = temp_dir.join("readonly_input.json");
+    fs::write(&ro_fixture, r#"{"status":"baseline"}"#).unwrap();
+
+    let script = temp_dir.join("fake_codex.py");
+    fs::write(
+        &script,
+        r#"#!/usr/bin/env python3
+import os, sys
+assert os.environ.get("MAE_NETWORK_DISABLED") == "1", "Network must be disabled"
+assert os.environ.get("CARGO_NET_OFFLINE") == "true", "Cargo offline must be set"
+print("agent-executed-ok")
+sys.exit(0)
+"#,
+    )
+    .unwrap();
+
+    let policy = AgentContainmentPolicy::new(&temp_dir)
+        .with_read_only_fixture(&ro_fixture)
+        .with_network_disabled(true)
+        .with_timeout(Duration::from_secs(5));
+
+    let backend = CodexAgentBackend::new().with_process_runner(
+        "python3",
+        vec![script.to_str().unwrap().to_string()],
+        policy,
+    );
+
+    let (_, provenance) = OpfPromptProvider::from_root(workspace_root())
+        .unwrap()
+        .render_prompt(
+            "migration.code-migrator",
+            &[("context_path", "target/tasks/task-1")],
+        )
+        .unwrap();
+
+    let res = backend
+        .execute_prompt("migrate slice", &provenance)
+        .expect("Subprocess execution should succeed");
+    assert!(res.success);
+    assert!(res.log_summary.contains("agent-executed-ok"));
+
+    let _ = fs::remove_dir_all(&temp_dir);
+}
+
+#[test]
+fn test_subprocess_agent_containment_rejects_read_only_fixture_mutation() {
+    use mae_application::AgentContainmentPolicy;
+    use std::time::Duration;
+
+    let temp_dir = unique_temp_dir("agent_containment_ro");
+    let ro_fixture = temp_dir.join("readonly_input.json");
+    fs::write(&ro_fixture, r#"{"status":"baseline"}"#).unwrap();
+
+    let script = temp_dir.join("rogue_agent.py");
+    fs::write(
+        &script,
+        format!(
+            r#"import os, stat
+p = {:?}
+try:
+    os.chmod(p, stat.S_IWRITE | stat.S_IREAD)
+    with open(p, "w") as f:
+        f.write("mutated!")
+except PermissionError:
+    pass
+"#,
+            ro_fixture.to_str().unwrap()
+        ),
+    )
+    .unwrap();
+
+    let policy = AgentContainmentPolicy::new(&temp_dir)
+        .with_read_only_fixture(&ro_fixture)
+        .with_timeout(Duration::from_secs(5));
+
+    let backend = ClaudeCodeAgentBackend::new().with_process_runner(
+        "python3",
+        vec![script.to_str().unwrap().to_string()],
+        policy,
+    );
+
+    let (_, provenance) = OpfPromptProvider::from_root(workspace_root())
+        .unwrap()
+        .render_prompt(
+            "migration.code-migrator",
+            &[("context_path", "target/tasks/task-1")],
+        )
+        .unwrap();
+
+    let res = backend.execute_prompt("migrate slice", &provenance);
+    assert!(
+        res.is_err(),
+        "Mutating a read-only fixture must fail the containment gate"
+    );
+    assert!(res
+        .unwrap_err()
+        .to_string()
+        .contains("Containment violation"));
+
+    // Verify original fixture content was restored by containment guard
+    let restored = fs::read_to_string(&ro_fixture).unwrap();
+    assert_eq!(restored, r#"{"status":"baseline"}"#);
+
+    let _ = fs::remove_dir_all(&temp_dir);
+}
+
+#[test]
+fn test_subprocess_agent_timeout_terminates_descendant_processes() {
+    use mae_application::AgentContainmentPolicy;
+    use std::time::Duration;
+
+    let temp_dir = unique_temp_dir("agent_containment_timeout");
+    let late_mutation_file = temp_dir.join("late_mutation.txt");
+
+    // Parent spawns a child process that sleeps 1.0s then writes late_mutation_file, while parent sleeps 10s
+    let script = temp_dir.join("spawn_descendant.py");
+    fs::write(
+        &script,
+        format!(
+            r#"import subprocess, sys, time
+target = {:?}
+child_code = "import sys, time; time.sleep(1.0); open(sys.argv[1], 'w').write('escaped')"
+subprocess.Popen([sys.executable, "-c", child_code, target])
+time.sleep(10)
+"#,
+            late_mutation_file.to_str().unwrap()
+        ),
+    )
+    .unwrap();
+
+    let policy = AgentContainmentPolicy::new(&temp_dir).with_timeout(Duration::from_millis(300));
+
+    let backend = CopilotAgentBackend::new().with_process_runner(
+        "python3",
+        vec![script.to_str().unwrap().to_string()],
+        policy,
+    );
+
+    let (_, provenance) = OpfPromptProvider::from_root(workspace_root())
+        .unwrap()
+        .render_prompt(
+            "migration.code-migrator",
+            &[("context_path", "target/tasks/task-1")],
+        )
+        .unwrap();
+
+    let res = backend.execute_prompt("migrate slice", &provenance);
+    assert!(res.is_err(), "Timed-out agent must return error");
+    assert!(res.unwrap_err().to_string().contains("timed out"));
+
+    // Wait past the descendant's 1.2s timer and confirm the descendant was killed with the process group
+    std::thread::sleep(Duration::from_millis(1400));
+    assert!(
+        !late_mutation_file.exists(),
+        "Descendant process must be terminated on timeout and unable to mutate files after run"
+    );
+
+    let _ = fs::remove_dir_all(&temp_dir);
+}

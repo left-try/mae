@@ -4,13 +4,14 @@
 //! the source Python script and the compiled native Rust binary,
 //! comparing exit codes, structured output formats, and error channels.
 
+use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use mae_domain::contract::VerificationCategory;
+use mae_domain::contract::{Contract, VerificationCategory};
 use mae_domain::ids::{ArtifactRevision, ContractId};
-use mae_domain::ports::DomainError;
+use mae_domain::ports::{DomainError, VerifierPluginPort};
 use mae_domain::verification::{CoverageDisclosure, EvidenceRecord, VerificationStatus};
 
 #[derive(Debug, Clone)]
@@ -18,6 +19,10 @@ pub struct CliDifferentialScenario {
     pub id: String,
     pub args: Vec<String>,
     pub stdin_data: Option<String>,
+    pub expected_exit_code: Option<i32>,
+    pub expected_stderr_substrings: Vec<String>,
+    pub compared_files: Vec<String>,
+    pub excluded_reason: Option<String>,
 }
 
 impl CliDifferentialScenario {
@@ -26,11 +31,35 @@ impl CliDifferentialScenario {
             id: id.to_string(),
             args: args.iter().map(|s| s.to_string()).collect(),
             stdin_data: None,
+            expected_exit_code: None,
+            expected_stderr_substrings: Vec::new(),
+            compared_files: Vec::new(),
+            excluded_reason: None,
         }
     }
 
     pub fn with_stdin(mut self, data: &str) -> Self {
         self.stdin_data = Some(data.to_string());
+        self
+    }
+
+    pub fn with_expected_exit_code(mut self, code: i32) -> Self {
+        self.expected_exit_code = Some(code);
+        self
+    }
+
+    pub fn with_expected_stderr_contains(mut self, substring: &str) -> Self {
+        self.expected_stderr_substrings.push(substring.to_string());
+        self
+    }
+
+    pub fn with_compared_file(mut self, relative_path: &str) -> Self {
+        self.compared_files.push(relative_path.to_string());
+        self
+    }
+
+    pub fn with_excluded_reason(mut self, reason: &str) -> Self {
+        self.excluded_reason = Some(reason.to_string());
         self
     }
 }
@@ -45,15 +74,48 @@ pub struct CliScenarioResult {
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct CliDifferentialVerifier;
+pub struct CliDifferentialVerifier {
+    configured_python_script: Option<String>,
+    configured_rust_target_dir: Option<String>,
+    configured_scenarios: Vec<CliDifferentialScenario>,
+}
 
 impl CliDifferentialVerifier {
     pub fn new() -> Self {
-        Self
+        Self::default()
+    }
+
+    pub fn for_pipeline(
+        python_script: impl Into<String>,
+        rust_target_dir: impl Into<String>,
+        scenarios: Vec<CliDifferentialScenario>,
+    ) -> Self {
+        Self {
+            configured_python_script: Some(python_script.into()),
+            configured_rust_target_dir: Some(rust_target_dir.into()),
+            configured_scenarios: scenarios,
+        }
     }
 
     pub fn verify(
         &self,
+        python_script: &str,
+        rust_target_dir: &str,
+        scenarios: &[CliDifferentialScenario],
+        target_rev: ArtifactRevision,
+    ) -> Result<EvidenceRecord, DomainError> {
+        self.verify_for_contract(
+            ContractId::new("C_CLI_DIFFERENTIAL_PARITY"),
+            python_script,
+            rust_target_dir,
+            scenarios,
+            target_rev,
+        )
+    }
+
+    pub fn verify_for_contract(
+        &self,
+        contract_id: ContractId,
         python_script: &str,
         rust_target_dir: &str,
         scenarios: &[CliDifferentialScenario],
@@ -68,8 +130,16 @@ impl CliDifferentialVerifier {
             )));
         }
 
-        // 1. Build the Rust target binary
+        // 1. Build the Rust target binary (removing any stale binary first)
         let binary_path = self.build_rust_target(target_path)?;
+
+        // Prepare isolated per-run filesystem output directories for {OUT_DIR} placeholders
+        let py_out_dir = target_path.join(".mae_diff_py_out");
+        let rust_out_dir = target_path.join(".mae_diff_rust_out");
+        let _ = fs::remove_dir_all(&py_out_dir);
+        let _ = fs::remove_dir_all(&rust_out_dir);
+        fs::create_dir_all(&py_out_dir).map_err(|e| DomainError::PortError(e.to_string()))?;
+        fs::create_dir_all(&rust_out_dir).map_err(|e| DomainError::PortError(e.to_string()))?;
 
         // 2. Execute differential matrix
         let declared: Vec<String> = scenarios.iter().map(|s| s.id.clone()).collect();
@@ -80,18 +150,31 @@ impl CliDifferentialVerifier {
         let mut perf_log = Vec::new();
 
         for scenario in scenarios {
+            if let Some(ref reason) = scenario.excluded_reason {
+                unexecuted.push(scenario.id.clone());
+                perf_log.push(format!("{}: EXCLUDED ({})", scenario.id, reason));
+                continue;
+            }
+
             executed.push(scenario.id.clone());
 
-            let py_res = run_process(
-                "python3",
-                python_script,
-                &scenario.args,
-                scenario.stdin_data.as_deref(),
-            );
+            let py_args: Vec<String> = scenario
+                .args
+                .iter()
+                .map(|a| a.replace("{OUT_DIR}", py_out_dir.to_str().unwrap()))
+                .collect();
+            let rust_args: Vec<String> = scenario
+                .args
+                .iter()
+                .map(|a| a.replace("{OUT_DIR}", rust_out_dir.to_str().unwrap()))
+                .collect();
+
+            let py_res =
+                run_python_process(python_script, &py_args, scenario.stdin_data.as_deref());
             let rust_res = run_process(
                 binary_path.to_str().unwrap(),
                 "",
-                &scenario.args,
+                &rust_args,
                 scenario.stdin_data.as_deref(),
             );
 
@@ -100,22 +183,76 @@ impl CliDifferentialVerifier {
                     let mut mismatch = None;
                     if py.exit_code != rust.exit_code {
                         mismatch = Some(format!(
-                            "Exit code mismatch: python={} vs rust={}",
-                            py.exit_code, rust.exit_code
+                            "Exit code mismatch: python={} vs rust={}\nPY STDERR: {}\nRUST STDERR: {}",
+                            py.exit_code, rust.exit_code, py.stderr, rust.stderr
                         ));
-                    } else if py.exit_code == 0 {
-                        // Compare outputs
+                    } else if let Some(exp_code) = scenario.expected_exit_code {
+                        if rust.exit_code != exp_code {
+                            mismatch = Some(format!(
+                                "Expected exit code {}, but both exited with {}",
+                                exp_code, rust.exit_code
+                            ));
+                        }
+                    }
+
+                    if mismatch.is_none() && py.exit_code == 0 {
                         if !outputs_match(&py.stdout, &rust.stdout) {
                             mismatch = Some(format!(
                                 "Output mismatch!\nPYTHON:\n{}\nRUST:\n{}",
                                 py.stdout, rust.stdout
                             ));
                         }
-                    } else {
-                        // Both failed as expected: check that both emitted stderr
-                        if rust.stderr.trim().is_empty() && !py.stderr.trim().is_empty() {
-                            mismatch =
-                                Some("Rust failed without error message on stderr".to_string());
+                    } else if mismatch.is_none()
+                        && py.exit_code != 0
+                        && rust.stderr.trim().is_empty()
+                        && !py.stderr.trim().is_empty()
+                    {
+                        mismatch = Some("Rust failed without error message on stderr".to_string());
+                    }
+
+                    if mismatch.is_none() {
+                        for expected_sub in &scenario.expected_stderr_substrings {
+                            if !py.stderr.contains(expected_sub)
+                                || !rust.stderr.contains(expected_sub)
+                            {
+                                mismatch = Some(format!(
+                                    "Missing expected stderr diagnostic '{}'\nPY STDERR: {}\nRUST STDERR: {}",
+                                    expected_sub, py.stderr, rust.stderr
+                                ));
+                                break;
+                            }
+                        }
+                    }
+
+                    if mismatch.is_none() {
+                        for rel_file in &scenario.compared_files {
+                            let py_file = py_out_dir.join(rel_file);
+                            let rust_file = rust_out_dir.join(rel_file);
+                            match (fs::read_to_string(&py_file), fs::read_to_string(&rust_file)) {
+                                (Ok(py_content), Ok(rust_content)) => {
+                                    if !outputs_match(&py_content, &rust_content) {
+                                        mismatch = Some(format!(
+                                            "Filesystem artifact '{}' mismatch!\nPYTHON:\n{}\nRUST:\n{}",
+                                            rel_file, py_content, rust_content
+                                        ));
+                                        break;
+                                    }
+                                }
+                                (Err(e), _) => {
+                                    mismatch = Some(format!(
+                                        "Python did not produce expected file '{}': {}",
+                                        rel_file, e
+                                    ));
+                                    break;
+                                }
+                                (_, Err(e)) => {
+                                    mismatch = Some(format!(
+                                        "Rust did not produce expected file '{}': {}",
+                                        rel_file, e
+                                    ));
+                                    break;
+                                }
+                            }
                         }
                     }
 
@@ -144,11 +281,16 @@ impl CliDifferentialVerifier {
             }
         }
 
+        let _ = fs::remove_dir_all(&py_out_dir);
+        let _ = fs::remove_dir_all(&rust_out_dir);
+
         let coverage = CoverageDisclosure::with_unexecuted(declared, executed, passed, unexecuted);
-        let status = if coverage.is_complete() && discrepancies.is_empty() {
-            VerificationStatus::Pass
-        } else {
+        let status = if !discrepancies.is_empty() {
             VerificationStatus::Fail
+        } else if !coverage.is_complete() {
+            VerificationStatus::Inconclusive
+        } else {
+            VerificationStatus::Pass
         };
 
         let summary = if status.is_pass() {
@@ -163,6 +305,14 @@ impl CliDifferentialVerifier {
                 coverage.declared_scenarios.len(),
                 perf_summary
             )
+        } else if status == VerificationStatus::Inconclusive {
+            format!(
+                "CLI Differential Verification inconclusive: {}/{} scenarios passed, {} unexecuted ({:?})",
+                coverage.passed.len(),
+                coverage.declared_scenarios.len(),
+                coverage.unexecuted.len(),
+                coverage.unexecuted
+            )
         } else {
             format!(
                 "CLI Differential Verification failed: {} discrepancies found:\n{}",
@@ -172,7 +322,7 @@ impl CliDifferentialVerifier {
         };
 
         Ok(EvidenceRecord::new(
-            ContractId::new("C_CLI_DIFFERENTIAL_PARITY"),
+            contract_id,
             "CliDifferentialVerifier-v1",
             VerificationCategory::Behavioral,
             ArtifactRevision::initial(),
@@ -184,6 +334,18 @@ impl CliDifferentialVerifier {
     }
 
     fn build_rust_target(&self, target_dir: &Path) -> Result<PathBuf, DomainError> {
+        let cargo_toml_path = target_dir.join("Cargo.toml");
+        let crate_name =
+            parse_crate_name(&cargo_toml_path).unwrap_or_else(|| "dataforge".to_string());
+        let bin_filename = format!("{}{}", crate_name, std::env::consts::EXE_SUFFIX);
+        let expected_bin_path = target_dir.join("target/debug").join(&bin_filename);
+
+        // Remove any prior compiled binary before building so a broken or partial generation
+        // can never fall back to a stale executable from an earlier ArtifactRevision.
+        if expected_bin_path.exists() {
+            let _ = fs::remove_file(&expected_bin_path);
+        }
+
         let manifest_dir = env!("CARGO_MANIFEST_DIR");
         let workspace_tmp = Path::new(manifest_dir)
             .parent()
@@ -191,6 +353,7 @@ impl CliDifferentialVerifier {
             .parent()
             .unwrap()
             .join("target/tmp");
+        let _ = fs::create_dir_all(&workspace_tmp);
 
         let output = Command::new("cargo")
             .arg("build")
@@ -206,27 +369,57 @@ impl CliDifferentialVerifier {
             )));
         }
 
-        // Parse crate name from Cargo.toml or use directory name
-        let bin_path = target_dir.join("target/debug/dataforge");
-        if bin_path.exists() {
-            Ok(bin_path)
+        if expected_bin_path.exists() {
+            Ok(expected_bin_path)
         } else {
-            // Find any executable in target/debug
-            let debug_dir = target_dir.join("target/debug");
-            if let Ok(entries) = std::fs::read_dir(debug_dir) {
-                for entry in entries.flatten() {
-                    let p = entry.path();
-                    if p.is_file() && !p.extension().is_some_and(|ext| ext == "d" || ext == "rlib")
-                    {
-                        return Ok(p);
-                    }
-                }
-            }
-            Err(DomainError::PortError(
-                "Could not locate compiled target binary".to_string(),
-            ))
+            Err(DomainError::PortError(format!(
+                "Could not locate compiled target binary '{}' in target/debug",
+                bin_filename
+            )))
         }
     }
+}
+
+impl VerifierPluginPort for CliDifferentialVerifier {
+    fn category(&self) -> VerificationCategory {
+        VerificationCategory::Behavioral
+    }
+
+    fn verify(
+        &self,
+        contract: &Contract,
+        target_rev: ArtifactRevision,
+    ) -> Result<EvidenceRecord, DomainError> {
+        let py_script = self.configured_python_script.as_deref().ok_or_else(|| {
+            DomainError::PortError(
+                "CliDifferentialVerifier missing configured python_script".into(),
+            )
+        })?;
+        let rust_target_dir = self.configured_rust_target_dir.as_deref().ok_or_else(|| {
+            DomainError::PortError(
+                "CliDifferentialVerifier missing configured rust_target_dir".into(),
+            )
+        })?;
+        self.verify_for_contract(
+            contract.id.clone(),
+            py_script,
+            rust_target_dir,
+            &self.configured_scenarios,
+            target_rev,
+        )
+    }
+}
+
+fn parse_crate_name(cargo_toml_path: &Path) -> Option<String> {
+    let content = fs::read_to_string(cargo_toml_path).ok()?;
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("name") {
+            let after_eq = rest.trim_start().strip_prefix('=')?.trim();
+            return Some(after_eq.trim_matches('"').to_string());
+        }
+    }
+    None
 }
 
 struct ProcessResult {
@@ -234,6 +427,15 @@ struct ProcessResult {
     stdout: String,
     stderr: String,
     duration: std::time::Duration,
+}
+
+fn run_python_process(
+    script_arg: &str,
+    args: &[String],
+    stdin_data: Option<&str>,
+) -> Result<ProcessResult, String> {
+    run_process("python3", script_arg, args, stdin_data)
+        .or_else(|_| run_process("python", script_arg, args, stdin_data))
 }
 
 fn run_process(

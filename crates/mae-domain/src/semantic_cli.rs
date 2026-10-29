@@ -228,6 +228,26 @@ impl Default for CliIoContract {
     }
 }
 
+/// Pipeline operational capabilities modeled for multi-stage CLI workflows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum CliPipelineCapability {
+    StatePersistence,
+    CacheLedger,
+    RetryPolicy,
+    CheckpointResume,
+}
+
+impl CliPipelineCapability {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::StatePersistence => "STATE_PERSISTENCE",
+            Self::CacheLedger => "CACHE_LEDGER",
+            Self::RetryPolicy => "RETRY_POLICY",
+            Self::CheckpointResume => "CHECKPOINT_RESUME",
+        }
+    }
+}
+
 /// Definition of deterministic exit codes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CliExitCodeMapping {
@@ -235,6 +255,7 @@ pub struct CliExitCodeMapping {
     pub argument_error: i32,
     pub io_error: i32,
     pub data_error: i32,
+    pub stage_error: i32,
 }
 
 impl Default for CliExitCodeMapping {
@@ -244,6 +265,7 @@ impl Default for CliExitCodeMapping {
             argument_error: 1,
             io_error: 2,
             data_error: 3,
+            stage_error: 4,
         }
     }
 }
@@ -260,6 +282,7 @@ pub struct CliSemanticModel {
     pub detected_framework: String,
     pub detected_gaps: Vec<CliGapReasonCode>,
     pub concurrency_patterns: Vec<CliConcurrencyPattern>,
+    pub pipeline_capabilities: Vec<CliPipelineCapability>,
     pub performance_contract: Option<CliPerformanceContract>,
 }
 
@@ -280,6 +303,7 @@ impl CliSemanticModel {
             detected_framework: "argparse".to_string(),
             detected_gaps: Vec::new(),
             concurrency_patterns: Vec::new(),
+            pipeline_capabilities: Vec::new(),
             performance_contract: None,
         }
     }
@@ -289,6 +313,17 @@ impl CliSemanticModel {
             self.concurrency_patterns.push(pattern);
         }
         self
+    }
+
+    pub fn with_pipeline_capability(mut self, capability: CliPipelineCapability) -> Self {
+        if !self.pipeline_capabilities.contains(&capability) {
+            self.pipeline_capabilities.push(capability);
+        }
+        self
+    }
+
+    pub fn has_pipeline_capability(&self, capability: CliPipelineCapability) -> bool {
+        self.pipeline_capabilities.contains(&capability)
     }
 
     pub fn with_performance_contract(mut self, contract: CliPerformanceContract) -> Self {
@@ -305,7 +340,7 @@ impl CliSemanticModel {
     /// Computes a deterministic content hash for this CLI semantic model.
     pub fn content_hash(&self) -> ContentHash {
         let mut canonical_repr = format!(
-            "prog={}|ver={}|desc={}|framework={}|stdin={}|stdout_fmt={}|exit=[{},{},{},{}]",
+            "prog={}|ver={}|desc={}|framework={}|stdin={}|stdout_fmt={}|exit=[{},{},{},{},{}]",
             self.program_name,
             self.version,
             self.description,
@@ -315,8 +350,13 @@ impl CliSemanticModel {
             self.exit_codes.success,
             self.exit_codes.argument_error,
             self.exit_codes.io_error,
-            self.exit_codes.data_error
+            self.exit_codes.data_error,
+            self.exit_codes.stage_error
         );
+
+        for cap in &self.pipeline_capabilities {
+            canonical_repr.push_str(&format!("|pipe_cap={}", cap.as_str()));
+        }
 
         fn serialize_command(cmd: &CliCommandNode, out: &mut String) {
             out.push_str(&format!(";cmd={}:desc={}", cmd.name, cmd.description));

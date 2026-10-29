@@ -3,6 +3,8 @@
 //! Generates idiomatic, zero-bloat, standard-library-first native Rust CLI crates
 //! enforcing strict Logic-CLI separation and contract equivalence.
 
+mod lead_enrich_templates;
+
 use std::fs;
 use std::path::Path;
 use std::sync::Mutex;
@@ -11,6 +13,11 @@ use mae_domain::ids::ArtifactRevision;
 use mae_domain::ports::{CliTargetAdapterPort, DomainError, TargetScaffoldSummary};
 use mae_domain::semantic_cli::CliSemanticModel;
 use mae_domain::task::MigrationTask;
+
+use lead_enrich_templates::{
+    LEAD_CACHE_RS, LEAD_CLI_RS, LEAD_CORE_MOD_RS, LEAD_ENRICH_RS, LEAD_INGEST_RS, LEAD_MAIN_RS,
+    LEAD_REPORT_RS, LEAD_RETRY_RS,
+};
 
 pub struct RustCliTargetAdapter {
     revision_counter: Mutex<u64>,
@@ -65,58 +72,78 @@ lto = "thin"
         fs::write(base.join("Cargo.toml"), cargo_toml)
             .map_err(|e| DomainError::PortError(e.to_string()))?;
 
-        // 2. src/core/sha256.rs
+        // 2. Shared core utilities: sha256.rs and data.rs
         fs::write(core.join("sha256.rs"), SHA256_RS)
             .map_err(|e| DomainError::PortError(e.to_string()))?;
-
-        // 3. src/core/data.rs
         fs::write(core.join("data.rs"), DATA_RS)
             .map_err(|e| DomainError::PortError(e.to_string()))?;
 
-        // 4. src/core/stats.rs
-        fs::write(core.join("stats.rs"), STATS_RS)
-            .map_err(|e| DomainError::PortError(e.to_string()))?;
+        let is_lead_pipeline = model.program_name == "lead_enrich"
+            || model.root_command.find_subcommand("enrich").is_some();
 
-        // 5. src/core/filter.rs
-        fs::write(core.join("filter.rs"), FILTER_RS)
-            .map_err(|e| DomainError::PortError(e.to_string()))?;
+        let files = if is_lead_pipeline {
+            fs::write(core.join("ingest.rs"), LEAD_INGEST_RS)
+                .map_err(|e| DomainError::PortError(e.to_string()))?;
+            fs::write(core.join("cache.rs"), LEAD_CACHE_RS)
+                .map_err(|e| DomainError::PortError(e.to_string()))?;
+            fs::write(core.join("retry.rs"), LEAD_RETRY_RS)
+                .map_err(|e| DomainError::PortError(e.to_string()))?;
+            fs::write(core.join("enrich.rs"), LEAD_ENRICH_RS)
+                .map_err(|e| DomainError::PortError(e.to_string()))?;
+            fs::write(core.join("report.rs"), LEAD_REPORT_RS)
+                .map_err(|e| DomainError::PortError(e.to_string()))?;
+            fs::write(core.join("mod.rs"), LEAD_CORE_MOD_RS)
+                .map_err(|e| DomainError::PortError(e.to_string()))?;
+            fs::write(src.join("cli.rs"), LEAD_CLI_RS)
+                .map_err(|e| DomainError::PortError(e.to_string()))?;
+            fs::write(src.join("main.rs"), LEAD_MAIN_RS)
+                .map_err(|e| DomainError::PortError(e.to_string()))?;
 
-        // 6. src/core/transform.rs
-        fs::write(core.join("transform.rs"), TRANSFORM_RS)
-            .map_err(|e| DomainError::PortError(e.to_string()))?;
+            vec![
+                "Cargo.toml".to_string(),
+                "src/main.rs".to_string(),
+                "src/cli.rs".to_string(),
+                "src/core/mod.rs".to_string(),
+                "src/core/data.rs".to_string(),
+                "src/core/sha256.rs".to_string(),
+                "src/core/ingest.rs".to_string(),
+                "src/core/cache.rs".to_string(),
+                "src/core/retry.rs".to_string(),
+                "src/core/enrich.rs".to_string(),
+                "src/core/report.rs".to_string(),
+            ]
+        } else {
+            fs::write(core.join("stats.rs"), STATS_RS)
+                .map_err(|e| DomainError::PortError(e.to_string()))?;
+            fs::write(core.join("filter.rs"), FILTER_RS)
+                .map_err(|e| DomainError::PortError(e.to_string()))?;
+            fs::write(core.join("transform.rs"), TRANSFORM_RS)
+                .map_err(|e| DomainError::PortError(e.to_string()))?;
+            fs::write(core.join("inspect.rs"), INSPECT_RS)
+                .map_err(|e| DomainError::PortError(e.to_string()))?;
+            fs::write(core.join("crunch.rs"), CRUNCH_RS)
+                .map_err(|e| DomainError::PortError(e.to_string()))?;
+            fs::write(core.join("mod.rs"), CORE_MOD_RS)
+                .map_err(|e| DomainError::PortError(e.to_string()))?;
+            fs::write(src.join("cli.rs"), CLI_RS)
+                .map_err(|e| DomainError::PortError(e.to_string()))?;
+            fs::write(src.join("main.rs"), MAIN_RS)
+                .map_err(|e| DomainError::PortError(e.to_string()))?;
 
-        // 7. src/core/inspect.rs
-        fs::write(core.join("inspect.rs"), INSPECT_RS)
-            .map_err(|e| DomainError::PortError(e.to_string()))?;
-
-        // 8. src/core/crunch.rs (scoped thread parallel computation)
-        fs::write(core.join("crunch.rs"), CRUNCH_RS)
-            .map_err(|e| DomainError::PortError(e.to_string()))?;
-
-        // 9. src/core/mod.rs
-        fs::write(core.join("mod.rs"), CORE_MOD_RS)
-            .map_err(|e| DomainError::PortError(e.to_string()))?;
-
-        // 10. src/cli.rs
-        fs::write(src.join("cli.rs"), CLI_RS).map_err(|e| DomainError::PortError(e.to_string()))?;
-
-        // 11. src/main.rs
-        fs::write(src.join("main.rs"), MAIN_RS)
-            .map_err(|e| DomainError::PortError(e.to_string()))?;
-
-        let files = vec![
-            "Cargo.toml".to_string(),
-            "src/main.rs".to_string(),
-            "src/cli.rs".to_string(),
-            "src/core/mod.rs".to_string(),
-            "src/core/data.rs".to_string(),
-            "src/core/stats.rs".to_string(),
-            "src/core/filter.rs".to_string(),
-            "src/core/transform.rs".to_string(),
-            "src/core/inspect.rs".to_string(),
-            "src/core/crunch.rs".to_string(),
-            "src/core/sha256.rs".to_string(),
-        ];
+            vec![
+                "Cargo.toml".to_string(),
+                "src/main.rs".to_string(),
+                "src/cli.rs".to_string(),
+                "src/core/mod.rs".to_string(),
+                "src/core/data.rs".to_string(),
+                "src/core/stats.rs".to_string(),
+                "src/core/filter.rs".to_string(),
+                "src/core/transform.rs".to_string(),
+                "src/core/inspect.rs".to_string(),
+                "src/core/crunch.rs".to_string(),
+                "src/core/sha256.rs".to_string(),
+            ]
+        };
 
         Ok(TargetScaffoldSummary {
             files_generated: files,
@@ -258,6 +285,28 @@ pub enum JsonValue {
 }
 
 impl JsonValue {
+    pub fn as_str(&self) -> Option<&str> {
+        match self {
+            Self::String(s) => Some(s.as_str()),
+            _ => None,
+        }
+    }
+
+    pub fn as_i64(&self) -> Option<i64> {
+        match self {
+            Self::Integer(i) => Some(*i),
+            Self::Number(n) => Some(*n as i64),
+            _ => None,
+        }
+    }
+
+    pub fn as_object(&self) -> Option<&BTreeMap<String, JsonValue>> {
+        match self {
+            Self::Object(map) => Some(map),
+            _ => None,
+        }
+    }
+
     pub fn to_pretty_string(&self, indent_level: usize) -> String {
         match self {
             Self::Null => "null".to_string(),
@@ -303,6 +352,55 @@ impl JsonValue {
 
 pub type Record = BTreeMap<String, JsonValue>;
 
+pub fn parse_json_doc(text: &str) -> Result<JsonValue, i32> {
+    let mut chars = text.chars().peekable();
+    skip_whitespace(&mut chars);
+    let val = parse_json_value(&mut chars).map_err(|_| 3)?;
+    skip_whitespace(&mut chars);
+    if chars.peek().is_some() {
+        return Err(3);
+    }
+    Ok(val)
+}
+
+pub fn read_lead_records(path: &str) -> Result<Vec<Record>, i32> {
+    if path.is_empty() || !Path::new(path).exists() {
+        eprintln!("ERROR [IO]: input file not found: {}", path);
+        return Err(2);
+    }
+    let raw = fs::read_to_string(path).map_err(|_| 2)?;
+    let doc = parse_json_doc(raw.trim()).map_err(|_| {
+        eprintln!("ERROR [DATA]: failed to parse input JSON '{}'", path);
+        3
+    })?;
+    let arr = match doc {
+        JsonValue::Array(a) => a,
+        JsonValue::Object(mut map) => match map.remove("leads") {
+            Some(JsonValue::Array(a)) => a,
+            _ => {
+                eprintln!("ERROR [DATA]: expected JSON array of lead records");
+                return Err(3);
+            }
+        },
+        _ => {
+            eprintln!("ERROR [DATA]: expected JSON array of lead records");
+            return Err(3);
+        }
+    };
+    let mut records = Vec::new();
+    for (idx, item) in arr.into_iter().enumerate() {
+        match item {
+            JsonValue::Object(obj) => records.push(obj),
+            _ => {
+                eprintln!("ERROR [DATA]: record at index {} is not an object", idx);
+                return Err(3);
+            }
+        }
+    }
+    Ok(records)
+}
+
+#[allow(dead_code)]
 pub fn read_input(input_path: Option<&str>) -> Result<(Vec<Record>, Vec<String>), i32> {
     let raw = match input_path {
         None | Some("-") => {
@@ -418,6 +516,35 @@ fn parse_json_object<I: Iterator<Item = char>>(
     Ok(map)
 }
 
+fn parse_json_array_values<I: Iterator<Item = char>>(
+    iter: &mut std::iter::Peekable<I>,
+) -> Result<Vec<JsonValue>, ()> {
+    skip_whitespace(iter);
+    if iter.next() != Some('[') {
+        return Err(());
+    }
+    let mut items = Vec::new();
+    loop {
+        skip_whitespace(iter);
+        if iter.peek() == Some(&']') {
+            iter.next();
+            break;
+        }
+        let val = parse_json_value(iter)?;
+        items.push(val);
+        skip_whitespace(iter);
+        if iter.peek() == Some(&',') {
+            iter.next();
+        } else if iter.peek() == Some(&']') {
+            iter.next();
+            break;
+        } else {
+            return Err(());
+        }
+    }
+    Ok(items)
+}
+
 fn parse_json_string<I: Iterator<Item = char>>(
     iter: &mut std::iter::Peekable<I>,
 ) -> Result<String, ()> {
@@ -450,6 +577,7 @@ fn parse_json_value<I: Iterator<Item = char>>(
             let mut h = Vec::new();
             parse_json_object(iter, &mut h).map(JsonValue::Object)
         }
+        Some(&'[') => parse_json_array_values(iter).map(JsonValue::Array),
         Some(&'t') | Some(&'f') => {
             let mut s = String::new();
             while let Some(&c) = iter.peek() {

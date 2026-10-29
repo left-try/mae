@@ -398,3 +398,60 @@ fn test_cli_subcommands_analyze_and_migrate_cli_end_to_end() {
 
     let _ = fs::remove_dir_all(target_out);
 }
+
+#[test]
+fn test_lead_enrich_cli_pilot_with_containment_retry_recovery_and_fresh_evidence() {
+    let root = workspace_root();
+    let py_file = root.join("fixtures/python-rust-cli/source/lead_enrich.py");
+    let target_out = root.join(format!(
+        "target/tmp/lead_enrich_pilot_e2e_{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&target_out);
+
+    let analyze_out = execute_cli_args(&[
+        "mae".to_string(),
+        "analyze-cli".to_string(),
+        py_file.to_str().unwrap().to_string(),
+    ])
+    .expect("analyze-cli on lead_enrich failed");
+    assert!(analyze_out.contains("program=lead_enrich"));
+    assert!(analyze_out.contains("subcommands=3"));
+    assert!(analyze_out.contains("STATE_PERSISTENCE"));
+    assert!(analyze_out.contains("RETRY_POLICY"));
+    assert!(analyze_out.contains("CHECKPOINT_RESUME"));
+
+    let pilot_out = execute_cli_args(&[
+        "mae".to_string(),
+        "pilot-cli".to_string(),
+        root.to_str().unwrap().to_string(),
+        py_file.to_str().unwrap().to_string(),
+        target_out.to_str().unwrap().to_string(),
+    ])
+    .expect("pilot-cli on lead_enrich failed");
+
+    assert!(
+        pilot_out.contains("MAE CLI Pilot Complete: target_crate=lead_enrich"),
+        "{}",
+        pilot_out
+    );
+    assert!(pilot_out.contains("status=PASS"), "{}", pilot_out);
+    assert!(pilot_out.contains("repairs_triggered=1"), "{}", pilot_out);
+    assert!(pilot_out.contains("target_rev=r2"), "{}", pilot_out);
+    assert!(pilot_out.contains("scenarios_passed=9/9"), "{}", pilot_out);
+
+    let manifest_path = target_out.join(".mae-artifacts/pilot-manifest.json");
+    assert!(
+        manifest_path.exists(),
+        "pilot-manifest.json must be emitted"
+    );
+    let manifest_json = fs::read_to_string(&manifest_path).unwrap();
+    assert!(manifest_json.contains("\"target_crate\": \"lead_enrich\""));
+    assert!(manifest_json.contains("\"target_revision\": 2"));
+    assert!(manifest_json.contains("\"repairs_triggered\": 1"));
+    assert!(manifest_json.contains("\"network_disabled\": true"));
+    assert!(manifest_json.contains("\"passed_scenarios\": 9"));
+    assert!(manifest_json.contains("\"unexecuted_scenarios\": 0"));
+
+    let _ = fs::remove_dir_all(&target_out);
+}

@@ -13,6 +13,7 @@ pub struct BuildVerifier {
     pub target_dir: PathBuf,
     pub execute_cargo_test: bool,
     pub source_revision: ArtifactRevision,
+    pub is_cli_target: bool,
 }
 
 impl BuildVerifier {
@@ -21,6 +22,16 @@ impl BuildVerifier {
             target_dir: target_dir.into(),
             execute_cargo_test,
             source_revision: ArtifactRevision::initial(),
+            is_cli_target: false,
+        }
+    }
+
+    pub fn for_cli_target(target_dir: impl Into<PathBuf>, execute_cargo_test: bool) -> Self {
+        Self {
+            target_dir: target_dir.into(),
+            execute_cargo_test,
+            source_revision: ArtifactRevision::initial(),
+            is_cli_target: true,
         }
     }
 
@@ -29,7 +40,32 @@ impl BuildVerifier {
         let main_rs = self.target_dir.join("src/main.rs");
         let app_slint = self.target_dir.join("ui/app.slint");
 
-        if !cargo_toml.exists() || !main_rs.exists() || !app_slint.exists() {
+        if self.is_cli_target {
+            let cli_rs = self.target_dir.join("src/cli.rs");
+            let core_mod = self.target_dir.join("src/core/mod.rs");
+            if app_slint.exists() {
+                return Ok(BuildGateReport {
+                    success: false,
+                    compiler_messages: vec![
+                        "Wrong target kind: Slint desktop UI found in CLI migration target"
+                            .to_string(),
+                    ],
+                    clippy_clean: false,
+                    fmt_clean: false,
+                });
+            }
+            if !cargo_toml.exists() || !main_rs.exists() || !cli_rs.exists() || !core_mod.exists() {
+                return Ok(BuildGateReport {
+                    success: false,
+                    compiler_messages: vec![
+                        "Missing required Cargo.toml, src/main.rs, src/cli.rs, or src/core/mod.rs"
+                            .to_string(),
+                    ],
+                    clippy_clean: false,
+                    fmt_clean: false,
+                });
+            }
+        } else if !cargo_toml.exists() || !main_rs.exists() || !app_slint.exists() {
             return Ok(BuildGateReport {
                 success: false,
                 compiler_messages: vec![
@@ -55,10 +91,20 @@ impl BuildVerifier {
         }
 
         if self.execute_cargo_test {
+            let manifest_dir = env!("CARGO_MANIFEST_DIR");
+            let workspace_tmp = std::path::Path::new(manifest_dir)
+                .parent()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .join("target/tmp");
+            let _ = fs::create_dir_all(&workspace_tmp);
+
             let output = Command::new("cargo")
                 .arg("test")
                 .arg("--offline")
                 .current_dir(&self.target_dir)
+                .env("TMPDIR", workspace_tmp)
                 .output()
                 .map_err(|e| DomainError::PortError(format!("Failed to invoke cargo test: {e}")))?;
 

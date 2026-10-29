@@ -1,0 +1,7 @@
+[
+  {"id": "lead-101", "email": "  Alice@Acme.io ", "company": "Acme Corp", "role": "VP Engineering"},
+  {"id": "lead-102", "email": "bob@acme.io", "company": "Acme Corp", "role": "Staff Engineer"},
+  {"id": "lead-103", "email": "alice@acme.io", "company": "Acme Corp Duplicate", "role": "VP Engineering"},
+  {"id": "lead-104", "email": "carol@globex.com", "company": "Globex Inc", "role": "CTO"},
+  {"id": "lead-105", "email": "dave@flaky-provider.org", "company": "Flaky Org", "role": "Director"}
+]

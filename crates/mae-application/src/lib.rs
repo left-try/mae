@@ -15,8 +15,9 @@ pub mod opf;
 pub mod orchestrator;
 
 pub use aamf_runtime::{
-    CheckpointManager, CheckpointSnapshot, ClaudeCodeAgentBackend, CodexAgentBackend,
-    CopilotAgentBackend, DeterministicMockAgentBackend, ExecutionMode, WaveSchedule,
+    AgentContainmentPolicy, CheckpointManager, CheckpointSnapshot, ClaudeCodeAgentBackend,
+    CodexAgentBackend, CopilotAgentBackend, DeterministicMockAgentBackend, ExecutionMode,
+    ReproducibilityGate, WaveSchedule,
 };
 pub use artifact_store::{FileSystemArtifactRepository, InMemoryArtifactRepository};
 pub use okf::OkfKnowledgeRepository;

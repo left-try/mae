@@ -41,8 +41,9 @@ pub use ports::{
     TargetScaffoldSummary, VerifierPluginPort,
 };
 pub use semantic_cli::{
-    CliArgument, CliArgumentKind, CliCommandNode, CliExitCodeMapping, CliGapReasonCode,
-    CliIoContract, CliSemanticModel, CliValueType,
+    CliArgument, CliArgumentKind, CliCommandNode, CliConcurrencyPattern, CliExitCodeMapping,
+    CliGapReasonCode, CliIoContract, CliPerformanceContract, CliPipelineCapability,
+    CliSemanticModel, CliValueType,
 };
 pub use semantic_ui::{
     ApiEndpointBinding, AssetEntry, ComponentNode, EffectBinding, InteractionBinding,

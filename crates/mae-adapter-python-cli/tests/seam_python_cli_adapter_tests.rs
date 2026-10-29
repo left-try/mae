@@ -180,3 +180,56 @@ fn test_assess_capabilities_report() {
         .iter()
         .any(|a| a.feature_name == "cli_concurrency_scoped_parallelism"));
 }
+
+#[test]
+fn test_extract_semantics_and_pipeline_capabilities_from_lead_enrich_fixture() {
+    use mae_domain::semantic_cli::CliPipelineCapability;
+
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let lead_fixture = PathBuf::from(manifest_dir)
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("fixtures/python-rust-cli/source/lead_enrich.py");
+
+    let adapter = PythonCliSourceAdapter::new();
+    let model = adapter
+        .extract_semantics(lead_fixture.to_str().unwrap())
+        .expect("Failed to extract semantics from lead_enrich.py");
+
+    assert_eq!(model.program_name, "lead_enrich");
+    assert_eq!(model.version, "1.2.0");
+    assert_eq!(model.total_subcommands(), 3);
+    assert!(model.root_command.find_subcommand("ingest").is_some());
+    assert!(model.root_command.find_subcommand("enrich").is_some());
+    assert!(model.root_command.find_subcommand("report").is_some());
+
+    // Exit codes including EXIT_STAGE_ERROR = 4
+    assert_eq!(model.exit_codes.success, 0);
+    assert_eq!(model.exit_codes.argument_error, 1);
+    assert_eq!(model.exit_codes.io_error, 2);
+    assert_eq!(model.exit_codes.data_error, 3);
+    assert_eq!(model.exit_codes.stage_error, 4);
+
+    // Pipeline operational capabilities
+    assert!(model.has_pipeline_capability(CliPipelineCapability::StatePersistence));
+    assert!(model.has_pipeline_capability(CliPipelineCapability::CacheLedger));
+    assert!(model.has_pipeline_capability(CliPipelineCapability::RetryPolicy));
+    assert!(model.has_pipeline_capability(CliPipelineCapability::CheckpointResume));
+
+    let report = adapter.assess_capabilities(&model).unwrap();
+    assert!(!report.has_critical_unresolved_gaps());
+    assert!(report
+        .assessments
+        .iter()
+        .any(|a| a.feature_name == "cli_pipeline_state_persistence"));
+    assert!(report
+        .assessments
+        .iter()
+        .any(|a| a.feature_name == "cli_pipeline_retry_policy"));
+    assert!(report
+        .assessments
+        .iter()
+        .any(|a| a.feature_name == "cli_pipeline_checkpoint_resume"));
+}

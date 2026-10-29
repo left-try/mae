@@ -1,10 +1,12 @@
 use std::collections::{BTreeMap, HashSet};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 use mae_domain::{
-    AgentBackendPort, AgentResult, ArtifactRevision, DomainError, MigrationAggregate, MigrationId,
-    MigrationTask, PlanHash, PromptProvenance, TaskId, TaskState,
+    AgentBackendPort, AgentResult, ArtifactRevision, ContentHash, DomainError, MigrationAggregate,
+    MigrationId, MigrationTask, PlanHash, PromptProvenance, TaskId, TaskState,
 };
 
 /// Execution mode for task scheduling in the AAMF runtime.
@@ -508,16 +510,396 @@ fn parse_json_array<I: Iterator<Item = char>>(
 }
 
 // ---------------------------------------------------------------------------
+// Reproducibility Gate & OS-Level Agent Containment
+// ---------------------------------------------------------------------------
+
+/// Captures and verifies the immutable git commit, toolchain, and read-only fixture digests
+/// required before running a controlled migration probe or pilot.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReproducibilityGate {
+    pub mae_commit_sha: String,
+    pub rustc_version: String,
+    pub python_version: String,
+    pub fixture_hashes: BTreeMap<String, ContentHash>,
+}
+
+impl ReproducibilityGate {
+    /// Captures the current workspace git commit SHA, toolchain versions, and fixture hashes.
+    pub fn capture(repo_root: &Path, fixtures: &[PathBuf]) -> Result<Self, DomainError> {
+        let sha_out = Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(repo_root)
+            .output()
+            .map_err(|e| DomainError::PortError(format!("Failed to execute git rev-parse: {e}")))?;
+
+        if !sha_out.status.success() {
+            return Err(DomainError::PortError(
+                "Reproducibility gate failed: unable to resolve git HEAD SHA".to_string(),
+            ));
+        }
+
+        let mae_commit_sha = String::from_utf8_lossy(&sha_out.stdout).trim().to_string();
+        if mae_commit_sha.len() != 40 || !mae_commit_sha.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err(DomainError::PortError(format!(
+                "Reproducibility gate failed: invalid git commit SHA '{mae_commit_sha}'"
+            )));
+        }
+
+        let rustc_out = Command::new("rustc")
+            .arg("--version")
+            .output()
+            .map_err(|e| DomainError::PortError(format!("Failed to query rustc version: {e}")))?;
+        let rustc_version = String::from_utf8_lossy(&rustc_out.stdout)
+            .trim()
+            .to_string();
+
+        let py_out = Command::new("python3")
+            .arg("--version")
+            .output()
+            .or_else(|_| Command::new("python").arg("--version").output())
+            .map_err(|e| DomainError::PortError(format!("Failed to query python version: {e}")))?;
+        let python_version = {
+            let stdout = String::from_utf8_lossy(&py_out.stdout).trim().to_string();
+            if stdout.is_empty() {
+                String::from_utf8_lossy(&py_out.stderr).trim().to_string()
+            } else {
+                stdout
+            }
+        };
+
+        let mut fixture_hashes = BTreeMap::new();
+        for path in fixtures {
+            let bytes = fs::read(path).map_err(|e| {
+                DomainError::PortError(format!(
+                    "Reproducibility gate failed: missing fixture {}: {}",
+                    path.display(),
+                    e
+                ))
+            })?;
+            let key = path
+                .strip_prefix(repo_root)
+                .unwrap_or(path.as_path())
+                .to_string_lossy()
+                .replace('\\', "/");
+            fixture_hashes.insert(key, ContentHash::compute(&bytes));
+        }
+
+        Ok(Self {
+            mae_commit_sha,
+            rustc_version,
+            python_version,
+            fixture_hashes,
+        })
+    }
+
+    /// Verifies that the workspace matches the recorded commit SHA and all fixture hashes remain intact.
+    pub fn verify(&self, repo_root: &Path) -> Result<(), DomainError> {
+        let sha_out = Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(repo_root)
+            .output()
+            .map_err(|e| DomainError::PortError(format!("Failed to execute git rev-parse: {e}")))?;
+
+        let current_sha = String::from_utf8_lossy(&sha_out.stdout).trim().to_string();
+        if current_sha != self.mae_commit_sha {
+            return Err(DomainError::PortError(format!(
+                "Reproducibility gate failed: expected commit '{}', found '{}'",
+                self.mae_commit_sha, current_sha
+            )));
+        }
+
+        for (rel_path, expected_hash) in &self.fixture_hashes {
+            let full_path = repo_root.join(rel_path);
+            let bytes = fs::read(&full_path).map_err(|e| {
+                DomainError::PortError(format!(
+                    "Reproducibility gate failed: cannot read fixture {}: {}",
+                    full_path.display(),
+                    e
+                ))
+            })?;
+            let actual_hash = ContentHash::compute(&bytes);
+            if &actual_hash != expected_hash {
+                return Err(DomainError::PortError(format!(
+                    "Reproducibility gate failed: fixture '{}' hash mismatch (expected {}, got {})",
+                    rel_path, expected_hash, actual_hash
+                )));
+            }
+        }
+
+        Ok(())
+    }
+}
+
+/// OS-level process, filesystem, network, and timeout containment policy for real coding-model runs.
+#[derive(Debug, Clone)]
+pub struct AgentContainmentPolicy {
+    pub working_dir: PathBuf,
+    pub read_only_fixtures: Vec<PathBuf>,
+    pub network_disabled: bool,
+    pub timeout: Duration,
+    pub max_output_bytes: usize,
+}
+
+impl AgentContainmentPolicy {
+    pub fn new(working_dir: impl Into<PathBuf>) -> Self {
+        Self {
+            working_dir: working_dir.into(),
+            read_only_fixtures: Vec::new(),
+            network_disabled: true,
+            timeout: Duration::from_secs(60),
+            max_output_bytes: 256 * 1024,
+        }
+    }
+
+    pub fn with_read_only_fixture(mut self, path: impl Into<PathBuf>) -> Self {
+        self.read_only_fixtures.push(path.into());
+        self
+    }
+
+    pub fn with_network_disabled(mut self, disabled: bool) -> Self {
+        self.network_disabled = disabled;
+        self
+    }
+
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = timeout;
+        self
+    }
+
+    pub fn with_max_output_bytes(mut self, max_bytes: usize) -> Self {
+        self.max_output_bytes = max_bytes;
+        self
+    }
+}
+
+#[derive(Debug, Clone)]
+struct SubprocessRunnerConfig {
+    executable: String,
+    base_args: Vec<String>,
+    containment: AgentContainmentPolicy,
+}
+
+fn execute_contained_subprocess(
+    provider: &str,
+    runner: &SubprocessRunnerConfig,
+    rendered_prompt: &str,
+    provenance: &PromptProvenance,
+) -> Result<AgentResult, DomainError> {
+    fs::create_dir_all(&runner.containment.working_dir).map_err(|e| {
+        DomainError::PortError(format!(
+            "Failed to create agent containment working directory: {e}"
+        ))
+    })?;
+
+    // 1. Snapshot read-only fixtures prior to agent execution
+    let mut fixture_snapshots: Vec<(PathBuf, Vec<u8>, ContentHash)> = Vec::new();
+    for path in &runner.containment.read_only_fixtures {
+        let bytes = fs::read(path).map_err(|e| {
+            DomainError::PortError(format!(
+                "Failed to snapshot read-only fixture {}: {}",
+                path.display(),
+                e
+            ))
+        })?;
+        let hash = ContentHash::compute(&bytes);
+        fixture_snapshots.push((path.clone(), bytes, hash));
+    }
+
+    // 2. Prepare temporary stdout/stderr capture files so descendant processes cannot hang pipes
+    let stdout_file_path = runner
+        .containment
+        .working_dir
+        .join(format!(".mae_agent_stdout_{}.log", std::process::id()));
+    let stderr_file_path = runner
+        .containment
+        .working_dir
+        .join(format!(".mae_agent_stderr_{}.log", std::process::id()));
+
+    let stdout_file = fs::File::create(&stdout_file_path)
+        .map_err(|e| DomainError::PortError(format!("Failed to create agent stdout log: {e}")))?;
+    let stderr_file = fs::File::create(&stderr_file_path)
+        .map_err(|e| DomainError::PortError(format!("Failed to create agent stderr log: {e}")))?;
+
+    let mut cmd = Command::new(&runner.executable);
+    cmd.args(&runner.base_args)
+        .current_dir(&runner.containment.working_dir)
+        .env("MAE_PROMPT_ID", &provenance.prompt_id)
+        .env("MAE_PROMPT_DIGEST", &provenance.content_digest)
+        .env("MAE_RENDERED_PROMPT", rendered_prompt)
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(stdout_file))
+        .stderr(Stdio::from(stderr_file));
+
+    if runner.containment.network_disabled {
+        cmd.env("MAE_NETWORK_DISABLED", "1")
+            .env("CARGO_NET_OFFLINE", "true")
+            .env("PIP_NO_INDEX", "1")
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .env("HTTP_PROXY", "http://127.0.0.1:1")
+            .env("HTTPS_PROXY", "http://127.0.0.1:1")
+            .env("ALL_PROXY", "http://127.0.0.1:1")
+            .env("NO_PROXY", "");
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+
+    let mut child = cmd.spawn().map_err(|e| {
+        let _ = fs::remove_file(&stdout_file_path);
+        let _ = fs::remove_file(&stderr_file_path);
+        DomainError::PortError(format!(
+            "{} agent backend failed to spawn '{}': {}",
+            provider, runner.executable, e
+        ))
+    })?;
+
+    let child_pid = child.id();
+    let start = Instant::now();
+    let poll_interval = Duration::from_millis(15);
+    let mut exit_status = None;
+    let mut timed_out = false;
+
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                exit_status = Some(status);
+                break;
+            }
+            Ok(None) => {
+                if start.elapsed() >= runner.containment.timeout {
+                    timed_out = true;
+                    break;
+                }
+                std::thread::sleep(poll_interval);
+            }
+            Err(e) => {
+                terminate_process_tree(&mut child, child_pid);
+                let _ = fs::remove_file(&stdout_file_path);
+                let _ = fs::remove_file(&stderr_file_path);
+                return Err(DomainError::PortError(format!(
+                    "{} agent process wait failed: {}",
+                    provider, e
+                )));
+            }
+        }
+    }
+
+    // Always terminate the entire process group so no background child survives the run
+    terminate_process_tree(&mut child, child_pid);
+
+    let stdout_bytes = fs::read(&stdout_file_path).unwrap_or_default();
+    let stderr_bytes = fs::read(&stderr_file_path).unwrap_or_default();
+    let _ = fs::remove_file(&stdout_file_path);
+    let _ = fs::remove_file(&stderr_file_path);
+
+    // 3. Verify read-only fixtures were not mutated; restore and fail if violated
+    let mut violation_msg = None;
+    for (path, original_bytes, expected_hash) in &fixture_snapshots {
+        let current_ok = fs::read(path)
+            .map(|b| &ContentHash::compute(&b) == expected_hash)
+            .unwrap_or(false);
+        if !current_ok {
+            let _ = fs::write(path, original_bytes);
+            if violation_msg.is_none() {
+                violation_msg = Some(format!(
+                    "Containment violation: read-only fixture '{}' was mutated during {} agent execution",
+                    path.display(),
+                    provider
+                ));
+            }
+        }
+    }
+
+    if let Some(msg) = violation_msg {
+        return Err(DomainError::PortError(msg));
+    }
+
+    if timed_out {
+        return Err(DomainError::PortError(format!(
+            "{} agent process timed out after {:?} on prompt '{}'",
+            provider, runner.containment.timeout, provenance.prompt_id
+        )));
+    }
+
+    let status = exit_status.unwrap();
+    let max_len = runner.containment.max_output_bytes;
+    let stdout_trunc = &stdout_bytes[..stdout_bytes.len().min(max_len)];
+    let stderr_trunc = &stderr_bytes[..stderr_bytes.len().min(max_len)];
+    let stdout_str = String::from_utf8_lossy(stdout_trunc).trim().to_string();
+    let stderr_str = String::from_utf8_lossy(stderr_trunc).trim().to_string();
+
+    let log_summary = if stderr_str.is_empty() {
+        format!(
+            "{} executed prompt '{}': {}",
+            provider, provenance.prompt_id, stdout_str
+        )
+    } else {
+        format!(
+            "{} executed prompt '{}': stdout={} stderr={}",
+            provider, provenance.prompt_id, stdout_str, stderr_str
+        )
+    };
+
+    Ok(AgentResult {
+        output_artifacts: Vec::new(),
+        log_summary,
+        success: status.success(),
+    })
+}
+
+fn terminate_process_tree(child: &mut std::process::Child, child_pid: u32) {
+    #[cfg(unix)]
+    {
+        let neg_pgid = format!("-{}", child_pid);
+        let _ = Command::new("kill")
+            .args(["-9", "--", &neg_pgid])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+    #[cfg(windows)]
+    {
+        let pid_str = child_pid.to_string();
+        let _ = Command::new("taskkill")
+            .args(["/F", "/T", "/PID", &pid_str])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+// ---------------------------------------------------------------------------
 // Agent Backend Implementations
 // ---------------------------------------------------------------------------
 
 /// AI Agent backend provider for OpenAI Codex.
 #[derive(Debug, Clone, Default)]
-pub struct CodexAgentBackend;
+pub struct CodexAgentBackend {
+    runner: Option<SubprocessRunnerConfig>,
+}
 
 impl CodexAgentBackend {
     pub fn new() -> Self {
-        Self
+        Self { runner: None }
+    }
+
+    pub fn with_process_runner(
+        mut self,
+        executable: impl Into<String>,
+        base_args: Vec<String>,
+        containment: AgentContainmentPolicy,
+    ) -> Self {
+        self.runner = Some(SubprocessRunnerConfig {
+            executable: executable.into(),
+            base_args,
+            containment,
+        });
+        self
     }
 
     /// Builds command-line arguments for Codex CLI.
@@ -539,20 +921,41 @@ impl CodexAgentBackend {
 impl AgentBackendPort for CodexAgentBackend {
     fn execute_prompt(
         &self,
-        _rendered_prompt: &str,
+        rendered_prompt: &str,
         provenance: &PromptProvenance,
     ) -> Result<AgentResult, DomainError> {
-        Err(unconfigured_agent_backend("Codex", provenance))
+        match &self.runner {
+            Some(runner) => {
+                execute_contained_subprocess("Codex", runner, rendered_prompt, provenance)
+            }
+            None => Err(unconfigured_agent_backend("Codex", provenance)),
+        }
     }
 }
 
 /// AI Agent backend provider for Anthropic Claude Code.
 #[derive(Debug, Clone, Default)]
-pub struct ClaudeCodeAgentBackend;
+pub struct ClaudeCodeAgentBackend {
+    runner: Option<SubprocessRunnerConfig>,
+}
 
 impl ClaudeCodeAgentBackend {
     pub fn new() -> Self {
-        Self
+        Self { runner: None }
+    }
+
+    pub fn with_process_runner(
+        mut self,
+        executable: impl Into<String>,
+        base_args: Vec<String>,
+        containment: AgentContainmentPolicy,
+    ) -> Self {
+        self.runner = Some(SubprocessRunnerConfig {
+            executable: executable.into(),
+            base_args,
+            containment,
+        });
+        self
     }
 
     /// Builds command-line arguments for Claude Code CLI.
@@ -569,20 +972,41 @@ impl ClaudeCodeAgentBackend {
 impl AgentBackendPort for ClaudeCodeAgentBackend {
     fn execute_prompt(
         &self,
-        _rendered_prompt: &str,
+        rendered_prompt: &str,
         provenance: &PromptProvenance,
     ) -> Result<AgentResult, DomainError> {
-        Err(unconfigured_agent_backend("Claude Code", provenance))
+        match &self.runner {
+            Some(runner) => {
+                execute_contained_subprocess("Claude Code", runner, rendered_prompt, provenance)
+            }
+            None => Err(unconfigured_agent_backend("Claude Code", provenance)),
+        }
     }
 }
 
 /// AI Agent backend provider for GitHub Copilot.
 #[derive(Debug, Clone, Default)]
-pub struct CopilotAgentBackend;
+pub struct CopilotAgentBackend {
+    runner: Option<SubprocessRunnerConfig>,
+}
 
 impl CopilotAgentBackend {
     pub fn new() -> Self {
-        Self
+        Self { runner: None }
+    }
+
+    pub fn with_process_runner(
+        mut self,
+        executable: impl Into<String>,
+        base_args: Vec<String>,
+        containment: AgentContainmentPolicy,
+    ) -> Self {
+        self.runner = Some(SubprocessRunnerConfig {
+            executable: executable.into(),
+            base_args,
+            containment,
+        });
+        self
     }
 
     /// Builds command-line arguments for Copilot CLI.
@@ -604,10 +1028,15 @@ impl CopilotAgentBackend {
 impl AgentBackendPort for CopilotAgentBackend {
     fn execute_prompt(
         &self,
-        _rendered_prompt: &str,
+        rendered_prompt: &str,
         provenance: &PromptProvenance,
     ) -> Result<AgentResult, DomainError> {
-        Err(unconfigured_agent_backend("Copilot", provenance))
+        match &self.runner {
+            Some(runner) => {
+                execute_contained_subprocess("Copilot", runner, rendered_prompt, provenance)
+            }
+            None => Err(unconfigured_agent_backend("Copilot", provenance)),
+        }
     }
 }
 

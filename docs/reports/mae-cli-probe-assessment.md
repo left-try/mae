@@ -39,3 +39,14 @@ Keep MAE under evaluation as a migration tool; do not treat this probe as proof 
 ## Source material
 
 The supplied assessment refers to `E:/lead-sourcing-enrichment-module/.superpowers/sdd/2026-10-22-python-pipeline-rust-migration/task-1-report.md` and `E:/lead-sourcing-enrichment-module/tools/mae/docs/cli-probe.md`. Those external files were not available in this MAE workspace during this revision; reported test and review results above are attributed to the supplied assessment rather than independently re-run here.
+
+## Follow-Up Implementation & Controlled Pilot Evidence (In-Repo Completion)
+
+To close the architectural and verification gaps identified above within this repository before moving to MAE v0.2, the following capabilities and gates have been implemented and verified via TDD across all 5 seams:
+
+1. **Reproducibility & Fixture Integrity (`ReproducibilityGate`):** Records and verifies git commit SHA, `rustc`/`python` toolchain versions, and SHA-256 digests of all read-only source and data fixtures before and after pilot execution.
+2. **OS-Level Process-Group Containment (`AgentContainmentPolicy`):** Runs subprocess-backed coding agents (`CodexAgentBackend`, `ClaudeCodeAgentBackend`, `CopilotAgentBackend`) in isolated OS process groups (`setpgid`), kills the entire child + descendant process tree on timeout, enforces offline environment flags (`MAE_NETWORK_DISABLED=1`, `CARGO_NET_OFFLINE=true`), and detects/restores any unauthorized mutation of read-only fixtures.
+3. **Representative Multi-Stage Lead-Enrichment CLI Slice (`fixtures/python-rust-cli/source/lead_enrich.py`):** Covers `ingest` (schema validation, deduplication, file output), `enrich` (persistent JSON state/cache ledger, transient provider failure simulation, bounded retries, exit code `4` on retry exhaustion with partial state saved, and `--resume` checkpoint recovery), and `report` (`summary` and `json` stage outcomes).
+4. **Independent Differential & Compliance Verification (`CliDifferentialVerifier`, `BuildVerifier::for_cli_target`, `NativeComplianceVerifier::for_cli_target`):** Invalidates stale target binaries before rebuilds, compares `{OUT_DIR}` filesystem artifacts (`ingested.json`, `state.json`, `enriched.json`), asserts expected `stderr` retry/error diagnostics, rejects Python subprocess/PyO3 wrappers, and marks excluded scenarios `Inconclusive`.
+5. **Controlled Pilot Run (`mae pilot-cli`):** Executes the full failure-and-recovery lifecycle (`r1` incomplete output rejected -> `RecoveryPolicy::decide` -> `Repair` -> `r2` fresh rebuild and 9/9 scenario parity pass) and emits `.mae-artifacts/pilot-manifest.json`.
+

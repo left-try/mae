@@ -120,6 +120,28 @@ impl CliSourceAdapterPort for PythonCliSourceAdapter {
                 Some(mae_domain::semantic_cli::CliPerformanceContract::new(1.5));
         }
 
+        // 7. Pipeline operational capabilities (state persistence, cache ledger, retry policy, resume)
+        if content.contains("--state-file") || content.contains("state_file") {
+            model = model.with_pipeline_capability(
+                mae_domain::semantic_cli::CliPipelineCapability::StatePersistence,
+            );
+        }
+        if content.contains("domain_cache") || content.contains("cache_hits") {
+            model = model.with_pipeline_capability(
+                mae_domain::semantic_cli::CliPipelineCapability::CacheLedger,
+            );
+        }
+        if content.contains("--max-retries") || content.contains("max_retries") {
+            model = model.with_pipeline_capability(
+                mae_domain::semantic_cli::CliPipelineCapability::RetryPolicy,
+            );
+        }
+        if content.contains("--resume") || content.contains("resumed_skipped") {
+            model = model.with_pipeline_capability(
+                mae_domain::semantic_cli::CliPipelineCapability::CheckpointResume,
+            );
+        }
+
         Ok(model)
     }
 
@@ -144,6 +166,28 @@ impl CliSourceAdapterPort for PythonCliSourceAdapter {
         if model.is_concurrent() {
             report.add_assessment(CapabilityAssessment::new(
                 "cli_concurrency_scoped_parallelism",
+                CapabilityLevel::Supported,
+                MigrationStrategy::DirectNativeMapping,
+            ));
+        }
+
+        for cap in &model.pipeline_capabilities {
+            let feature_name = match cap {
+                mae_domain::semantic_cli::CliPipelineCapability::StatePersistence => {
+                    "cli_pipeline_state_persistence"
+                }
+                mae_domain::semantic_cli::CliPipelineCapability::CacheLedger => {
+                    "cli_pipeline_cache_ledger"
+                }
+                mae_domain::semantic_cli::CliPipelineCapability::RetryPolicy => {
+                    "cli_pipeline_retry_policy"
+                }
+                mae_domain::semantic_cli::CliPipelineCapability::CheckpointResume => {
+                    "cli_pipeline_checkpoint_resume"
+                }
+            };
+            report.add_assessment(CapabilityAssessment::new(
+                feature_name,
                 CapabilityLevel::Supported,
                 MigrationStrategy::DirectNativeMapping,
             ));
@@ -279,6 +323,10 @@ fn parse_exit_codes(text: &str) -> CliExitCodeMapping {
         } else if trimmed.starts_with("EXIT_DATA_ERROR") {
             if let Some(val) = parse_int_assignment(trimmed) {
                 mapping.data_error = val;
+            }
+        } else if trimmed.starts_with("EXIT_STAGE_ERROR") {
+            if let Some(val) = parse_int_assignment(trimmed) {
+                mapping.stage_error = val;
             }
         }
     }
